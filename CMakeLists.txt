@@ -114,6 +114,21 @@ target_compile_definitions(bri_query_witness_bounds PRIVATE HINSCAN_BLOCK_MODE=3
 target_compile_definitions(bri_query_adaptive_bounds PRIVATE HINSCAN_BLOCK_MODE=4)
 target_compile_definitions(bri_query_witness_bitmaps PRIVATE HINSCAN_BLOCK_MODE=5)
 target_compile_definitions(bri_query_witness_exclusion PRIVATE HINSCAN_BLOCK_MODE=6)
+# Experiment-only executables; normal query inputs and defaults stay unchanged.
+foreach(cache_mib IN ITEMS 32 256 1024)
+    foreach(bounds IN ITEMS on off)
+        set(ablation_target bri_ablation_${bounds}_${cache_mib})
+        add_executable(${ablation_target} src/tools/bri_query_index.cpp)
+        if(bounds STREQUAL "on")
+            target_compile_definitions(${ablation_target} PRIVATE HINSCAN_BLOCK_MODE=6)
+        else()
+            target_compile_definitions(${ablation_target} PRIVATE HINSCAN_BLOCK_MODE=2)
+        endif()
+        target_compile_definitions(${ablation_target} PRIVATE HINSCAN_CACHE_MIB=${cache_mib})
+        target_link_libraries(${ablation_target} PRIVATE pscan_on_fli_core)
+        set_target_properties(${ablation_target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+    endforeach()
+endforeach()
 target_link_libraries(bri_query_index PRIVATE pscan_on_fli_core)
 set_target_properties(bri_query_index PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"

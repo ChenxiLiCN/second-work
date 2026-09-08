@@ -9,6 +9,9 @@
 #ifndef HINSCAN_BLOCK_MODE
 #define HINSCAN_BLOCK_MODE 0
 #endif
+#ifndef HINSCAN_CACHE_MIB
+#define HINSCAN_CACHE_MIB 32
+#endif
 
 // Always a first-path query: no FLI, class index, similarity file, or query
 // result is read or persisted. Only the schema-independent BRI is persistent.
@@ -34,7 +37,7 @@ int main(int argc, char** argv) {
         const auto factor = hinscan::FactorIndex::build(graph, path);
         const auto built = Clock::now();
         const auto result = hinscan::run_pscan_on_fli(factor, threshold, mu,
-            32ULL * 1024 * 1024, nullptr, nullptr, true,
+            HINSCAN_CACHE_MIB * 1024ULL * 1024, nullptr, nullptr, true,
             static_cast<hinscan::BlockExecutionMode>(HINSCAN_BLOCK_MODE));
         const auto queried = Clock::now();
         hinscan::write_pscan_on_fli_results(argv[5], argv[3], mu, result);
@@ -43,6 +46,7 @@ int main(int argc, char** argv) {
         const auto& q = result.stats;
         std::cout << "index_mode=base_relation_on_demand_fli\n"
                   << "block_mode=" << HINSCAN_BLOCK_MODE << '\n'
+                  << "cache_budget_mib=" << HINSCAN_CACHE_MIB << '\n'
                   << "block_discovery_ms=" << q.block_discovery_ms << '\n'
                   << "certified_blocks=" << q.certified_blocks << '\n'
                   << "block_core_vertices=" << q.block_core_vertices << '\n'
