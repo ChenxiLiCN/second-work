@@ -7,6 +7,7 @@
 # Local experiment runs: indexes, materialized graphs, fixtures, output, logs,
 # timing tables and saved Windows executables. Keep scripts at experiments/.
 /experiments/*/
+/server-results/
 # This small reference table is an input to validate_v12.ps1/validate_v13.ps1.
 !/experiments/v11/
 /experiments/v11/*
