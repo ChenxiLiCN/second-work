@@ -1,0 +1,10 @@
+duplicate_kind,canonical_source,duplicate_source,scope,verification,action
+exact_directory,real_Dataset/DBLP,data_2/DBLP,8 files,SHA-256 equal for every corresponding file,duplicate directory not copied
+exact_directory,real_Dataset/FS,data_2/FS,10 files,SHA-256 equal for every corresponding file,duplicate directory not copied
+exact_directory,real_Dataset/IMDB,data_2/IMDB,21 files,SHA-256 equal for every corresponding file,duplicate directory not copied
+exact_directory,real_Dataset/Instacart,data_2/Instacart,8 files,SHA-256 equal for every corresponding file,duplicate directory not copied
+exact_directory,real_Dataset/Yelp,data_1/Yelp,6 files,SHA-256 equal for every corresponding file,duplicate directory not copied
+exact_file,data_1/Amazon/base.txt,data_1/Amazon/README.txt,one file,SHA-256 equal,kept base.txt because future loaders conventionally look for it
+exact_file,data_1/Movies/homograph_weighted_AMDMA.txt,data_1/Movies/homograph_weighted_pivot_AMDMA.txt,one file,SHA-256 equal,kept one reference output only
+redundant_archive,real_Dataset/IMDB/entity_actor.txt,real_Dataset/IMDB/entity_actor.zip,one compressed archive,decompressed entry SHA-256 equals TXT,kept TXT only
+semantic_placeholders,real_Dataset/IMDB/entity_costume.txt;real_Dataset/IMDB/relation_movie_costume.txt,,two zero-byte files,both intentionally represent different empty roles,both retained

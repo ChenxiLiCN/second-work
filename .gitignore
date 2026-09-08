@@ -1,0 +1,84 @@
+# Datasets are transferred separately. Keep documentation and provenance only.
+/data/*
+!/data/README.md
+!/data/manifests/
+/third_party/pscan/datasets/
+
+# Local experiment runs: indexes, materialized graphs, fixtures, output, logs,
+# timing tables and saved Windows executables. Keep scripts at experiments/.
+/experiments/*/
+# This small reference table is an input to validate_v12.ps1/validate_v13.ps1.
+!/experiments/v11/
+/experiments/v11/*
+!/experiments/v11/real-correctness.csv
+
+# Rebuild on the server; never reuse this machine's CMake cache or binaries.
+/build/
+/build-*/
+/cmake-build-*/
+/out/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+build.ninja
+.ninja_deps
+.ninja_log
+compile_commands.json
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.idb
+*.exp
+*.pch
+
+# Generated graph/index artifacts, including those placed outside data/.
+*.bin
+*.bri
+*.fli
+*.fni
+*.bsi
+*.beqi
+*.eqi
+*.sci
+*.seci
+*.seci-*
+manifest.upi
+
+# Local scratch space and reference papers are not needed for server execution.
+/tmp/
+/temp/
+/社区检测异构图论文参考/
+*.log
+*.tmp
+*.bak
+
+# Local IDE, OS and Python cache files.
+/.vs/
+/.vscode/
+/.idea/
+__pycache__/
+*.py[cod]
+/.venv/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local environment files; sanitized templates may be committed.
+.env
+.env.*
+!.env.example
+!.env.template
+
+# third_party/pscan is currently an embedded Git repository. This file does
+# NOT convert it into a submodule or vendor its source into the parent repo.
+# Resolve that separately before relying on a server clone of this project.

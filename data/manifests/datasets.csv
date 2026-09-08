@@ -1,0 +1,15 @@
+dataset_id,relative_path,format,source_branch,file_count,size_mib,declared_vertices,declared_relations,status,priority,recommended_meta_paths,notes
+dblp_small,raw/hin_text/dblp_small,hin_text,data_1/DBLP,6,0.93,32050,52736,ready,1,A-P-A;A-P-V-P-A,首个正确性数据集
+movies,raw/hin_text/movies,hin_text,data_1/Movies,8,1.39,24283,56091,ready,1,A-M-A;A-M-D-M-A;A-M-W-M-A,旧物化图和聚类结果已移至 reference_outputs
+aminer_dblp_apv_small,raw/hin_text/aminer_dblp_apv_small,hin_text,processed/aminer_dblp_apv_small,9,4.49,91440,87694,ready,2,A-P-A;A-P-V-P-A,包含原始 ID 映射 TSV
+imdb_legacy,raw/hin_text/imdb_legacy,hin_text,data_1/IMDB,6,10.38,275328,565529,ready,3,A-M-A;A-M-D-M-A,旧聚类结果已移至 reference_outputs
+yelp,raw/hin_text/yelp,hin_text,real_Dataset/Yelp,6,45.10,1472832,1869390,ready,3,U-R-B-R-U,与 data_1/Yelp 逐文件完全相同
+dblp_apv_full,raw/hin_text/dblp_apv_full,hin_text,processed/dblp_apv_full,9,1114.78,12544215,37071802,ready_with_parser_note,4,A-P-A;A-P-V-P-A,包含 ID 映射；base 数字模式后有说明文字，解析器须按声明行数停止
+dblp_v18,raw/hin_text/dblp_v18,hin_text,DBLP-V18,8,1265.15,20375574,63562943,ready,5,A-P-A;A-P-V-P-A;A-P-T-P-A,超大规模扩展实验
+dblp_entity_relation,raw/entity_relation/dblp,entity_relation,real_Dataset/DBLP,8,3.51,51527,120689,needs_conversion,3,author-paper-author;author-paper-conf-paper-author,与 data_2/DBLP 完全重复
+foursquare,raw/entity_relation/foursquare,entity_relation,real_Dataset/FS,10,225.02,4384992,9672283,needs_conversion,4,user-venue-user;user-venue-category-venue-user,高扇出枢轴场景；与 data_2/FS 完全重复
+imdb_large,raw/entity_relation/imdb_large,entity_relation,real_Dataset/IMDB,20,178.88,3358941,5265402,needs_conversion,4,movie-actor-movie;movie-director-movie,costume 实体与关系文件按模式预期为空；ZIP 冗余副本未复制
+instacart,raw/entity_relation/instacart,entity_relation,real_Dataset/Instacart,8,4.20,56585,199044,needs_conversion,4,user-product-user;product-aisle-product,与 data_2/Instacart 完全重复
+amazon,raw/custom/amazon,custom_adjacency,data_1/Amazon,4,1.76,13114,90340,needs_custom_conversion,6,Item-User-Item;Item-Brand-Item,base.txt 是说明文本而非统一数字模式；重复 README 未复制
+kegg1,raw/hin_text/kegg1,incomplete_hin_text,data_1/KEGG/kegg1,3,0.00,88,186,quarantined,9,O-G-O,缺 node 目录且 base.txt 含 93s 拼写错误
+kegg2,raw/hin_text/kegg2,incomplete_hin_text,data_1/KEGG/kegg2,3,0.00,49,114,quarantined,9,O-G-O,缺 node 目录
