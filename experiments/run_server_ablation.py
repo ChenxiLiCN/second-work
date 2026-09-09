@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only index reuse and isolated online ablations; Linux runner."""
+"""Corrected lazy-activation ablations and separate diagnostic runs; Linux."""
 import argparse
 import csv
 import hashlib
@@ -68,6 +68,8 @@ def main():
     ap.add_argument("--suite", choices=["all", "large", "medium", "smoke"], default="all")
     ap.add_argument("--repeats", type=int, default=3)
     ap.add_argument("--include-1g", action="store_true")
+    ap.add_argument("--skip-profiles", action="store_true",
+                    help="Run uninstrumented timings only; diagnostics are enabled by default")
     args = ap.parse_args()
     if args.repeats < 1:
         ap.error("--repeats must be positive")
@@ -80,7 +82,7 @@ def main():
     search = Path(os.environ.get("INDEX_SEARCH_ROOT", ROOT / "server-results")).resolve()
     data = Path(os.environ.get("DATA_ROOT", ROOT / "data")).resolve()
     results.mkdir(parents=True, exist_ok=True)
-    run = Path(tempfile.mkdtemp(prefix=time.strftime("%Y%m%d-%H%M%S-ablation-"), dir=results))
+    run = Path(tempfile.mkdtemp(prefix=time.strftime("%Y%m%d-%H%M%S-isolated-"), dir=results))
     print("Results:", run, flush=True)
     rows, failed = [], False
     selected = {
@@ -90,10 +92,15 @@ def main():
         "smoke": ["dblp_small"],
     }[args.suite]
     configs = [(b, m) for m in ([32, 256, 1024] if args.include_1g else [32, 256])
-               for b in ["on", "off"]]
+               for b in ["pressure", "off", "always"]]
+    modes = {"pressure": "6", "off": "7", "always": "8"}
+    profile_groups = [0] if args.skip_profiles else [0, 1, 2]
     bin_dir = build / "bin"
     try:
-        env = {"platform": platform.platform(), "arguments": vars(args),
+        env = {"experiment_version": "isolated_lazy_v2",
+               "activation": "lazy for all policies",
+               "profile_note": "p0 is uninstrumented timing; p1/p2 diagnostic inclusive timings overlap and must not be summed",
+               "platform": platform.platform(), "arguments": vars(args),
                "limit_seconds": limit, "index_search_root": str(search),
                "data_root": str(data), "build_dir": str(build)}
         for label, cmd in [("cpu", ["lscpu"]), ("memory", ["free", "-h"]),
@@ -106,7 +113,7 @@ def main():
         checked(["cmake", "-S", ROOT, "-B", build, "-DCMAKE_BUILD_TYPE=Release",
                  "-DCMAKE_CXX_COMPILER=g++"], run / "cmake-configure.log")
         targets = ["bri_build_index", "verify_adaptive_fli", "bri_query_witness_exclusion"]
-        targets += [f"bri_ablation_{b}_{m}" for b, m in configs]
+        targets += [f"bri_isolated_{b}_{m}_p{p}" for b, m in configs for p in profile_groups]
         checked(["cmake", "--build", build, "--parallel", str(jobs), "--target", *targets],
                 run / "cmake-build.log")
         with tempfile.TemporaryDirectory(prefix="oracle-", dir=run) as fixture:
@@ -143,35 +150,46 @@ def main():
                 expected = {kind: digest(Path(output) / f"{kind}-{eps}-5.txt")
                             for kind in ["result", "roles"]}
             (case_dir / "reference-hashes.json").write_text(json.dumps(expected, indent=2))
-            for repeat in range(1, args.repeats + 1):
+            # All formal repeats first, then one diagnostic pass per profile group.
+            passes = [(r, 0) for r in range(1, args.repeats + 1)]
+            passes += [(1, p) for p in profile_groups if p]
+            for repeat, profile_group in passes:
                 order = configs[:]
                 random.Random(20260908 + repeat).shuffle(order)
                 for position, (bounds, mib) in enumerate(order, 1):
-                    label = f"{bounds}-{mib}-r{repeat}"
+                    label = f"{bounds}-{mib}-p{profile_group}-r{repeat}"
                     print(f"[{name}] {label} ({position}/{len(order)})", flush=True)
                     with tempfile.TemporaryDirectory(prefix="output-", dir=case_dir) as output:
                         metrics = measured(case_dir / label,
-                            [bin_dir / f"bri_ablation_{bounds}_{mib}", index, path, eps, "5", output], limit)
+                            [bin_dir / f"bri_isolated_{bounds}_{mib}_p{profile_group}", index, path, eps, "5", output], limit)
                         row = dict(dataset=name, meta_path=path, epsilon=eps, mu=5,
-                                   repeat=repeat, order=position, bounds=bounds, cache_mib=mib, **metrics)
+                                   repeat=repeat, order=position, bounds=bounds, cache_mib=mib,
+                                   run_kind="diagnostic" if profile_group else "timing",
+                                   expected_profile_group=profile_group, **metrics)
                         row["cluster_match"] = row["roles_match"] = "not_checked"
                         if metrics["status"] == 0:
                             for kind, key in [("result", "cluster_match"), ("roles", "roles_match")]:
                                 file = Path(output) / f"{kind}-{eps}-5.txt"
                                 row[key] = int(file.is_file() and digest(file) == expected[kind])
-                        expected_mode = "6" if bounds == "on" else "2"
+                        expected_mode = modes[bounds]
                         row["config_match"] = int(metrics.get("block_mode") == expected_mode and
-                                                   metrics.get("cache_budget_mib") == str(mib))
+                                                   metrics.get("cache_budget_mib") == str(mib) and
+                                                   metrics.get("profile_group", "0") == str(profile_group))
+                        row["policy_match"] = int(bounds != "off" or
+                                                  metrics.get("witness_bound_checks") == "0")
                         row["valid"] = int(metrics["status"] == 0 and row["cluster_match"] == 1
-                                           and row["roles_match"] == 1 and row["config_match"] == 1)
+                                           and row["roles_match"] == 1 and row["config_match"] == 1
+                                           and row["policy_match"] == 1)
                         failed |= not row["valid"]
                         rows.append(row)
                         # Persist after every query, even if a subsequent query fails.
-                        write_rows(run / "runs.tsv", rows)
+                        write_rows(run / "runs.tsv", [r for r in rows if r["run_kind"] == "timing"])
+                        if profile_group:
+                            write_rows(run / "diagnostics.tsv", [r for r in rows if r["run_kind"] == "diagnostic"])
             if digest(index) != before:
                 raise RuntimeError(f"BRI changed during queries: {name}")
             (case_dir / "index-unchanged.txt").write_text("sha256_unchanged=1\n")
-    except Exception as exc:
+    except (Exception, KeyboardInterrupt) as exc:
         failed = True
         (run / "error.log").write_text(str(exc) + "\n")
         print("ERROR:", exc, file=sys.stderr)
@@ -180,7 +198,7 @@ def main():
         for name in selected:
             for bounds, mib in configs:
                 group = [r for r in rows if r["dataset"] == name and
-                         r["bounds"] == bounds and r["cache_mib"] == mib]
+                         r["bounds"] == bounds and r["cache_mib"] == mib and r["run_kind"] == "timing"]
                 good = [r for r in group if r["valid"]]
                 times = [r["elapsed_s"] for r in good]
                 summary.append(dict(dataset=name, bounds=bounds, cache_mib=mib,

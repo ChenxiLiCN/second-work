@@ -503,10 +503,13 @@ public:
           budgeted_index_(budgeted_index), block_mode_(block_mode) {
         if (adaptive_neighborhoods)
             adaptive_cache_ = std::make_unique<ExactNeighborhoodCache>(index, neighborhood_cache_bytes,
-                block_mode >= BlockExecutionMode::WitnessBounds,
-                block_mode >= BlockExecutionMode::AdaptiveWitnessBounds,
+                block_mode >= BlockExecutionMode::WitnessBounds &&
+                    block_mode != BlockExecutionMode::LazyNoWitness,
+                block_mode >= BlockExecutionMode::AdaptiveWitnessBounds &&
+                    block_mode != BlockExecutionMode::LazyAlwaysExclusion,
                 block_mode == BlockExecutionMode::WitnessBitmaps,
-                block_mode == BlockExecutionMode::WitnessExclusion);
+                block_mode == BlockExecutionMode::WitnessExclusion ||
+                    block_mode == BlockExecutionMode::LazyAlwaysExclusion);
         stats_.timestamp_workspace_bytes = similarity_workspace_.bytes();
         if (fingerprint_index_ != nullptr) {
             if (fingerprint_index_->vertex_count() != index_.vertex_count()) {

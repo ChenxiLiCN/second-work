@@ -167,7 +167,9 @@ int main(int argc, char** argv) {
                         compare(run_pscan_on_fli(factor,eps,mu,budget,nullptr,nullptr,false,BlockExecutionMode::AdaptiveWitnessBounds),reference);
                         compare(run_pscan_on_fli(factor,eps,mu,budget,nullptr,nullptr,true,BlockExecutionMode::WitnessBitmaps),reference);
                         compare(run_pscan_on_fli(factor,eps,mu,budget,nullptr,nullptr,true,BlockExecutionMode::WitnessExclusion),reference);
-                        cluster_cases += 9;
+                        compare(run_pscan_on_fli(factor,eps,mu,budget,nullptr,nullptr,true,BlockExecutionMode::LazyNoWitness),reference);
+                        compare(run_pscan_on_fli(factor,eps,mu,budget,nullptr,nullptr,true,BlockExecutionMode::LazyAlwaysExclusion),reference);
+                        cluster_cases += 11;
                     }
                 }
                 std::cout << "fixture=" << fixture << " path=" << specification << " passed\n";
