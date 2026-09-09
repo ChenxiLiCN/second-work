@@ -56,7 +56,7 @@ std::vector<std::vector<VertexId>> read_adjacency_lists(
     std::ifstream& input,
     std::uint64_t list_count,
     std::uint64_t value_limit,
-    std::uint64_t expected_values) {
+    std::uint64_t expected_values, bool id_sorted = true) {
     if (list_count > std::numeric_limits<std::size_t>::max()) {
         throw std::runtime_error("BRI adjacency list count exceeds this machine");
     }
@@ -78,8 +78,8 @@ std::vector<std::vector<VertexId>> read_adjacency_lists(
                 throw std::runtime_error("truncated BRI adjacency");
             }
         }
-        if (!std::is_sorted(list.begin(), list.end()) ||
-            std::adjacent_find(list.begin(), list.end()) != list.end()) {
+        if (id_sorted && (!std::is_sorted(list.begin(), list.end()) ||
+            std::adjacent_find(list.begin(), list.end()) != list.end())) {
             throw std::runtime_error("BRI adjacency is not strictly sorted");
         }
         for (const auto value : list) {
@@ -237,7 +237,9 @@ void HinGraph::save_binary(const std::filesystem::path& index_file) const {
     }
     constexpr char magic[8] = {'H', 'I', 'N', 'B', 'R', 'I', '\0', '\0'};
     output.write(magic, sizeof(magic));
-    write_binary(output, static_cast<std::uint32_t>(1));
+    const bool enhanced = std::any_of(relations_.begin(), relations_.end(),
+        [](const Relation& r) { return r.roundtrip_ready; });
+    write_binary(output, static_cast<std::uint32_t>(enhanced ? 2 : 1));
     write_binary(output, static_cast<std::uint32_t>(0x01020304U));
     write_binary(output, static_cast<std::uint32_t>(vertex_types_.size()));
     write_binary(output, static_cast<std::uint32_t>(relations_.size()));
@@ -268,6 +270,15 @@ void HinGraph::save_binary(const std::filesystem::path& index_file) const {
         write_binary(output, forward_edges);
         write_adjacency_lists(output, relation.forward);
         write_adjacency_lists(output, relation.reverse);
+        if (enhanced) {
+            write_binary(output, static_cast<std::uint32_t>(relation.roundtrip_ready));
+            if (relation.roundtrip_ready) {
+                for (auto d : relation.source_closed_degrees) write_binary(output, d);
+                for (auto d : relation.target_closed_degrees) write_binary(output, d);
+                write_adjacency_lists(output, relation.source_ordered_postings);
+                write_adjacency_lists(output, relation.target_ordered_postings);
+            }
+        }
     }
     if (!output) {
         throw std::runtime_error("failed to write BRI index payload");
@@ -285,7 +296,7 @@ HinGraph HinGraph::load_binary(const std::filesystem::path& index_file) {
     input.read(magic, sizeof(magic));
     const auto version = read_binary<std::uint32_t>(input, "version");
     const auto endian = read_binary<std::uint32_t>(input, "endian marker");
-    if (std::memcmp(magic, expected, sizeof(magic)) != 0 || version != 1 ||
+    if (std::memcmp(magic, expected, sizeof(magic)) != 0 || (version != 1 && version != 2) ||
         endian != 0x01020304U) {
         throw std::runtime_error("unsupported BRI index format");
     }
@@ -340,6 +351,45 @@ HinGraph HinGraph::load_binary(const std::filesystem::path& index_file) {
         relation.reverse = read_adjacency_lists(
             input, target_vertices, source_vertices,
             relation.loaded_edge_count);
+        if (version == 2) {
+            const auto flag = read_binary<std::uint32_t>(input, "roundtrip flag");
+            if (flag > 1) throw std::runtime_error("invalid roundtrip flag");
+            relation.roundtrip_ready = flag != 0;
+            if (relation.roundtrip_ready) {
+                auto read_degrees = [&](std::uint64_t n) {
+                    std::vector<std::uint64_t> result(n);
+                    for (auto& d : result) {
+                        d = read_binary<std::uint64_t>(input, "roundtrip degree");
+                        if (d == 0 || d > n) throw std::runtime_error("invalid roundtrip degree");
+                    }
+                    return result;
+                };
+                relation.source_closed_degrees = read_degrees(source_vertices);
+                relation.target_closed_degrees = read_degrees(target_vertices);
+                relation.source_ordered_postings = read_adjacency_lists(input,
+                    target_vertices, source_vertices, relation.loaded_edge_count, false);
+                relation.target_ordered_postings = read_adjacency_lists(input,
+                    source_vertices, target_vertices, relation.loaded_edge_count, false);
+                auto validate = [](const auto& ordered, const auto& original, const auto& degrees) {
+                    std::vector<std::size_t> seen(degrees.size(), 0);
+                    for (std::size_t row=0; row<ordered.size(); ++row) {
+                        if (ordered[row].size() != original[row].size())
+                            throw std::runtime_error("roundtrip posting size mismatch");
+                        VertexId previous=0; bool first=true;
+                        for (auto v : ordered[row]) {
+                            if (seen[v] == row+1 ||
+                                !std::binary_search(original[row].begin(), original[row].end(), v) ||
+                                (!first && (degrees[v] < degrees[previous] ||
+                                  (degrees[v] == degrees[previous] && v <= previous))))
+                                throw std::runtime_error("invalid roundtrip posting permutation");
+                            seen[v]=row+1; previous=v; first=false;
+                        }
+                    }
+                };
+                validate(relation.source_ordered_postings, relation.reverse, relation.source_closed_degrees);
+                validate(relation.target_ordered_postings, relation.forward, relation.target_closed_degrees);
+            }
+        }
         graph.relations_.push_back(std::move(relation));
     }
     if (input.peek() != std::ifstream::traits_type::eof()) {
@@ -350,6 +400,33 @@ HinGraph HinGraph::load_binary(const std::filesystem::path& index_file) {
 
 const std::vector<VertexType>& HinGraph::vertex_types() const noexcept {
     return vertex_types_;
+}
+
+void HinGraph::prepare_roundtrip_metadata() {
+    for (auto& r : relations_) {
+        // Same-type transitions have different semantics in the legacy loader.
+        // Leave those on the established online path.
+        if (r.source_type == r.target_type) continue;
+        auto prepare = [](const auto& forward, const auto& reverse,
+                          auto& degrees, auto& ordered) {
+            degrees.assign(forward.size(), 1);
+            std::vector<std::size_t> seen(forward.size(), 0);
+            for (std::size_t u=0; u<forward.size(); ++u) {
+                const auto epoch=u+1;
+                seen[u]=epoch;
+                for (auto w : forward[u]) for (auto v : reverse[w])
+                    if (seen[v] != epoch) { seen[v]=epoch; ++degrees[u]; }
+            }
+            ordered=reverse;
+            for (auto& row : ordered)
+                std::sort(row.begin(), row.end(), [&](VertexId a, VertexId b) {
+                    return degrees[a] != degrees[b] ? degrees[a] < degrees[b] : a < b;
+                });
+        };
+        prepare(r.forward, r.reverse, r.source_closed_degrees, r.source_ordered_postings);
+        prepare(r.reverse, r.forward, r.target_closed_degrees, r.target_ordered_postings);
+        r.roundtrip_ready=true;
+    }
 }
 
 const std::vector<Relation>& HinGraph::relations() const noexcept {

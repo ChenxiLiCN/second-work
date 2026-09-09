@@ -22,6 +22,10 @@ struct Relation {
     std::uint64_t loaded_edge_count = 0;
     std::vector<std::vector<VertexId>> forward;
     std::vector<std::vector<VertexId>> reverse;
+    // Optional BRI v2: exact RR^-1 closed degrees and degree-ordered postings.
+    bool roundtrip_ready = false;
+    std::vector<std::uint64_t> source_closed_degrees, target_closed_degrees;
+    std::vector<std::vector<VertexId>> source_ordered_postings, target_ordered_postings;
 };
 
 struct Transition {
@@ -36,6 +40,7 @@ public:
     static HinGraph load(const std::filesystem::path& dataset_directory);
     static HinGraph load_binary(const std::filesystem::path& index_file);
     void save_binary(const std::filesystem::path& index_file) const;
+    void prepare_roundtrip_metadata();
 
     const std::vector<VertexType>& vertex_types() const noexcept;
     const std::vector<Relation>& relations() const noexcept;

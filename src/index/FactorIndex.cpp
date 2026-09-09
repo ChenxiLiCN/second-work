@@ -1,6 +1,7 @@
 #include "index/FactorIndex.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -245,6 +246,33 @@ FactorIndex FactorIndex::build(const HinGraph& graph,
 
     const auto begin = std::chrono::steady_clock::now();
     FactorIndex index;
+    if (meta_path.size() == 3) {
+        const auto t = graph.transition(meta_path[0], meta_path[1]);
+        const auto& r = *t.relation;
+        if (r.roundtrip_ready && r.source_type != r.target_type) {
+            // First implementation owns query arrays; no expansion, union-count,
+            // or posting sort is repeated. Copy time is included online.
+            index.witnesses_ = t.use_reverse ? r.reverse : r.forward;
+            index.postings_ = t.use_reverse ? r.forward : r.reverse;
+            index.degrees_ = t.use_reverse ? r.target_closed_degrees : r.source_closed_degrees;
+            index.degree_ordered_postings_ = t.use_reverse ? r.target_ordered_postings : r.source_ordered_postings;
+            auto& st = index.stats_;
+            st.used_roundtrip_metadata = true;
+            st.target_vertices = index.witnesses_.size();
+            st.center_vertices = index.postings_.size();
+            st.half_path_incidences = r.loaded_edge_count;
+            std::uint64_t total=0;
+            for (auto d : index.degrees_) total += d;
+            if (total < st.target_vertices || (total-st.target_vertices)%2)
+                throw std::runtime_error("invalid roundtrip degree sum");
+            st.exact_projected_edges = (total-st.target_vertices)/2;
+            st.estimated_index_bytes = 3*st.half_path_incidences*sizeof(VertexId)
+                + (3*st.target_vertices + st.center_vertices + 2)*sizeof(std::uint64_t);
+            st.build_milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now()-begin).count();
+            return index;
+        }
+    }
     const auto target_count64 = graph.vertex_types()[meta_path.front()].count;
     const auto center_position = meta_path.size() / 2;
     const auto center_count64 = graph.vertex_types()[meta_path[center_position]].count;
@@ -498,6 +526,37 @@ FactorIndex FactorIndex::load(const std::filesystem::path& index_file) {
 
 std::uint64_t FactorIndex::vertex_count() const noexcept {
     return witnesses_.size();
+}
+
+bool SimilarityThreshold::certifies_common(std::uint64_t common,
+    std::uint64_t left, std::uint64_t right) const {
+    // Exact four-factor comparison in 256 bits; portable to MSVC and MinGW.
+    auto product = [](std::array<std::uint64_t,4> factors) {
+        std::array<std::uint32_t,8> value{}; value[0]=1;
+        for (auto factor : factors) {
+            std::array<std::uint32_t,8> next{};
+            const std::uint32_t words[2]={static_cast<std::uint32_t>(factor),
+                                         static_cast<std::uint32_t>(factor >> 32)};
+            for (std::size_t i=0; i<8; ++i) {
+                std::uint64_t carry=0;
+                std::size_t j=0;
+                for (; j<2 && i+j<8; ++j) {
+                    const auto x=static_cast<std::uint64_t>(value[i])*words[j]+next[i+j]+carry;
+                    next[i+j]=static_cast<std::uint32_t>(x); carry=x>>32;
+                }
+                for (auto k=i+j; carry && k<8; ++k) {
+                    const auto x=static_cast<std::uint64_t>(next[k])+carry;
+                    next[k]=static_cast<std::uint32_t>(x); carry=x>>32;
+                }
+            }
+            value=next;
+        }
+        return value;
+    };
+    const auto a=product({common,common,denominator,denominator});
+    const auto b=product({left,right,numerator,numerator});
+    for (int i=7; i>=0; --i) if (a[i]!=b[i]) return a[i]>b[i];
+    return true;
 }
 
 std::uint64_t FactorIndex::center_count() const noexcept {

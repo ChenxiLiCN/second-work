@@ -13,8 +13,12 @@ int main(int argc, char** argv) {
     }
     try {
         const auto begin = std::chrono::steady_clock::now();
-        const auto graph = hinscan::HinGraph::load(argv[1]);
+        auto graph = hinscan::HinGraph::load(argv[1]);
         const auto loaded = std::chrono::steady_clock::now();
+#ifdef HINSCAN_BUILD_ROUNDTRIP
+        graph.prepare_roundtrip_metadata();
+#endif
+        const auto prepared = std::chrono::steady_clock::now();
         graph.save_binary(argv[2]);
         const auto saved = std::chrono::steady_clock::now();
         std::uint64_t edges = 0;
@@ -27,9 +31,11 @@ int main(int argc, char** argv) {
                   << "hin_load_ms="
                   << std::chrono::duration_cast<std::chrono::milliseconds>(
                          loaded - begin).count() << '\n'
+                  << "roundtrip_prepare_ms="
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(prepared-loaded).count() << '\n'
                   << "bri_save_ms="
                   << std::chrono::duration_cast<std::chrono::milliseconds>(
-                         saved - loaded).count() << '\n'
+                         saved - prepared).count() << '\n'
                   << "bri_bytes=" << std::filesystem::file_size(argv[2])
                   << '\n';
         return 0;

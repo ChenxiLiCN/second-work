@@ -46,6 +46,7 @@ int main(int argc, char** argv) {
         const auto& q = result.stats;
         std::cout << "index_mode=base_relation_on_demand_fli\n"
                   << "block_mode=" << HINSCAN_BLOCK_MODE << '\n'
+                  << "used_roundtrip_metadata=" << f.used_roundtrip_metadata << '\n'
                   << "cache_budget_mib=" << HINSCAN_CACHE_MIB << '\n'
                   << "block_discovery_ms=" << q.block_discovery_ms << '\n'
                   << "certified_blocks=" << q.certified_blocks << '\n'

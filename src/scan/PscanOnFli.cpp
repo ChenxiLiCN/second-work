@@ -509,7 +509,8 @@ public:
                     block_mode != BlockExecutionMode::LazyAlwaysExclusion,
                 block_mode == BlockExecutionMode::WitnessBitmaps,
                 block_mode == BlockExecutionMode::WitnessExclusion ||
-                    block_mode == BlockExecutionMode::LazyAlwaysExclusion);
+                    block_mode == BlockExecutionMode::LazyAlwaysExclusion ||
+                    block_mode == BlockExecutionMode::CoreConnectivity);
         stats_.timestamp_workspace_bytes = similarity_workspace_.bytes();
         if (fingerprint_index_ != nullptr) {
             if (fingerprint_index_->vertex_count() != index_.vertex_count()) {
@@ -621,13 +622,26 @@ private:
         certified_prefix_.assign(index_.center_count(), 0);
         for (VertexId w = 0; w < index_.center_count(); ++w) {
             const auto& posting = index_.degree_ordered_posting(w);
-            // Each pair in this prefix shares at least |posting| closed neighbors.
-            // Testing against the largest degree suffices for the whole prefix.
+            // Every pair in a posting shares at least |posting| closed neighbors.
+            // Legacy mode proves a clique. Connectivity mode proves each prefix
+            // vertex core and similar to its minimum-degree anchor, not a clique.
+            const bool connectivity = block_mode_ == BlockExecutionMode::CoreConnectivity;
+            if (connectivity && posting.size() <= mu_) continue;
+            std::uint64_t partner=0;
+            if (connectivity) {
+                const auto a=index_.degree(posting[static_cast<std::size_t>(mu_-1)]);
+                const auto b=index_.degree(posting[static_cast<std::size_t>(mu_)]);
+                partner=threshold_.certifies_common(posting.size(),a,b) ? a : b;
+            }
             const auto end = std::partition_point(posting.begin(), posting.end(), [&](VertexId v) {
+                if (connectivity)
+                    return threshold_.certifies_common(posting.size(),index_.degree(v),partner);
                 return threshold_.required_common_neighbors(index_.degree(v), index_.degree(v)) <= posting.size();
             });
             const auto count = static_cast<std::size_t>(std::distance(posting.begin(), end));
-            if (count <= mu_) continue; // A SINGLE block proves mu distinct other vertices.
+            // Connectivity prefixes may be smaller than mu+1: the supporting
+            // similar neighbors need not themselves be core or in the prefix.
+            if (connectivity ? count == 0 : count <= mu_) continue;
             certified_prefix_[w] = count;
             ++stats_.certified_blocks;
             stats_.block_incidences += count;

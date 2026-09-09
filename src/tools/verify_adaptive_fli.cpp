@@ -94,9 +94,14 @@ int main(int argc, char** argv) {
         std::uint64_t witness_accepts=0, witness_rejects=0, witness_hits=0;
         std::uint64_t witness_bitmap_checks=0;
         std::mt19937 random(20260905);
-        for (unsigned fixture=0; fixture<14; ++fixture) {
+        const auto huge=std::numeric_limits<std::uint64_t>::max();
+        const SimilarityThreshold unit{huge,huge};
+        require(unit.certifies_common(huge,huge,huge), "wide certificate equality");
+        require(!unit.certifies_common(huge-1,huge,huge), "wide certificate rejection");
+        std::uint64_t new_core_cases=0;
+        for (unsigned fixture=0; fixture<16; ++fixture) {
             const unsigned n = fixture==0 ? 0 : fixture==1 ? 1 : fixture==2 ? 7 : fixture==3 ? 65 : 257;
-            const unsigned m = fixture<4 ? 5 : fixture==4 ? 257 : 23;
+            const unsigned m = fixture<4 ? 5 : fixture==4 ? 257 : fixture==15 ? 80 : 23;
             std::vector<std::pair<unsigned,unsigned>> edges;
             for (unsigned u=0; u<n; ++u) for (unsigned v=0; v<m; ++v) {
                 bool present = false;
@@ -104,11 +109,21 @@ int main(int argc, char** argv) {
                 if (fixture==3) present = true; // Dense bitmap, non-word-aligned domain.
                 if (fixture==4) present = u==v; // Lists, singleton neighborhoods.
                 if (fixture==5) present = u/16==v; // Sparse bitmaps.
-                if (fixture>=6) present = random()%1000 < (fixture-5)*17;
+                if (fixture>=6 && fixture<14) present = random()%1000 < (fixture-5)*17;
                 if (fixture==10) present = (v==0 && u<=5) || (v==1 && (u==0 || (u>=6 && u<=10)));
                 if (fixture==11) present = u<4 && v<4; // Duplicate witnesses cannot add density.
                 if (fixture==12) present = v<3 && u>=5*v && u<=5*v+5; // Overlapping blocks.
                 if (fixture==13) present = (v==0 && u<65) || (v==1 && u>0 && u<=65); // Sparse witness words.
+                if (fixture==14 || fixture==15) {
+                    present = v==0 && u<6;
+                    unsigned next_vertex=6, next_witness=1;
+                    const unsigned extra[6]={0,0,1,4,5,6};
+                    for (unsigned a=0; a<6; ++a) {
+                        const auto count=fixture==14 ? extra[a] : (a==0 ? 0U : 14U);
+                        for (unsigned j=0; j<count; ++j,++next_vertex,++next_witness)
+                            if (v==next_witness && (u==a || u==next_vertex)) present=true;
+                    }
+                }
                 if (present) edges.emplace_back(u,v);
             }
             const auto dir = std::filesystem::path(argv[1])/std::to_string(fixture);
@@ -120,9 +135,29 @@ int main(int argc, char** argv) {
                 for (const auto& e : edges) relation << e.first << ' ' << e.second << '\n';
             }
             const auto graph = HinGraph::load(dir);
+            graph.save_binary(dir/"legacy.bri");
+            auto enhanced=HinGraph::load_binary(dir/"legacy.bri");
+            enhanced.prepare_roundtrip_metadata();
+            enhanced.save_binary(dir/"enhanced.bri");
+            enhanced=HinGraph::load_binary(dir/"enhanced.bri");
+            for (const auto* p : {"A-B-A", "B-A-B", "A-B-A-B-A"}) {
+                const auto parsed=parse_meta_path(graph,p);
+                const auto original=FactorIndex::build(graph,parsed);
+                const auto prepared=FactorIndex::build(enhanced,parsed);
+                require(prepared.stats().used_roundtrip_metadata == (parsed.size()==3),
+                        "roundtrip fast-path routing");
+                for (VertexId v=0; v<original.vertex_count(); ++v)
+                    require(original.degree(v)==prepared.degree(v) &&
+                            original.collect_closed_neighborhood(v)==prepared.collect_closed_neighborhood(v),
+                            "roundtrip neighborhood mismatch");
+                for (VertexId w=0; w<original.center_count(); ++w)
+                    require(original.degree_ordered_posting(w)==prepared.degree_ordered_posting(w),
+                            "roundtrip order mismatch");
+            }
             for (const auto* specification : {"A-B-A", "A-B-A-B-A"}) {
                 const auto path = parse_meta_path(graph, specification);
                 const auto factor = FactorIndex::build(graph, path);
+                const auto prepared_factor = FactorIndex::build(enhanced,path);
                 const auto expected = oracle_neighborhoods(graph,path);
                 for (VertexId v=0; v<n; ++v) {
                     require(factor.degree(v)==expected[v].size(), "degree builder mismatch");
@@ -169,12 +204,21 @@ int main(int argc, char** argv) {
                         compare(run_pscan_on_fli(factor,eps,mu,budget,nullptr,nullptr,true,BlockExecutionMode::WitnessExclusion),reference);
                         compare(run_pscan_on_fli(factor,eps,mu,budget,nullptr,nullptr,true,BlockExecutionMode::LazyNoWitness),reference);
                         compare(run_pscan_on_fli(factor,eps,mu,budget,nullptr,nullptr,true,BlockExecutionMode::LazyAlwaysExclusion),reference);
-                        cluster_cases += 11;
+                        const auto fresh=run_pscan_on_fli(factor,eps,mu,budget,nullptr,nullptr,true,BlockExecutionMode::CoreConnectivity);
+                        compare(fresh,reference);
+                        compare(run_pscan_on_fli(prepared_factor,eps,mu,budget,nullptr,nullptr,true,BlockExecutionMode::CoreConnectivity),reference);
+                        const auto old=run_pscan_on_fli(factor,eps,mu,budget,nullptr,nullptr,true,BlockExecutionMode::WitnessExclusion);
+                        require(fresh.stats.block_core_vertices>=old.stats.block_core_vertices,
+                                "connectivity certificate lost old cores");
+                        if (fresh.stats.block_core_vertices>old.stats.block_core_vertices) ++new_core_cases;
+                        cluster_cases += 13;
                     }
                 }
                 std::cout << "fixture=" << fixture << " path=" << specification << " passed\n";
             }
         }
+        require(new_core_cases>0, "stronger certificate never exercised");
+        std::cout << "stronger_core_cases=" << new_core_cases << '\n';
         require(evictions>0 && bitmap_checks>0 && list_checks>0, "missing cache branch coverage");
         require(streaming_checks>0 && pair_bound_hits>0 && equal_factor_checks>0,
                 "missing streaming or sharing branch coverage");

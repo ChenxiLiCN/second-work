@@ -49,6 +49,7 @@ struct FactorIndexStats {
     // Fresh-build instrumentation only; the stable FLI file format is unchanged.
     double half_expansion_ms = 0, degree_compute_ms = 0, posting_order_ms = 0;
     std::uint64_t half_expansion_entries = 0;
+    bool used_roundtrip_metadata = false;
 };
 
 struct SimilarityThreshold {
@@ -59,7 +60,9 @@ struct SimilarityThreshold {
     std::uint64_t required_common_neighbors(std::uint64_t left_degree,
                                             std::uint64_t right_degree) const;
     bool fails_degree_ratio(std::uint64_t left_degree,
-                            std::uint64_t right_degree) const;
+                             std::uint64_t right_degree) const;
+    bool certifies_common(std::uint64_t common, std::uint64_t left_degree,
+                          std::uint64_t right_degree) const;
 };
 
 struct SimilarityCheck {
