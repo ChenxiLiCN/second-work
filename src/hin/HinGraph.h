@@ -37,7 +37,9 @@ struct Transition {
 
 class HinGraph {
 public:
-    static HinGraph load(const std::filesystem::path& dataset_directory);
+    // Optional compute-only timing: buffer input pairs before adjacency construction.
+    static HinGraph load(const std::filesystem::path& dataset_directory,
+                         double* relation_build_ms = nullptr);
     static HinGraph load_binary(const std::filesystem::path& index_file);
     void save_binary(const std::filesystem::path& index_file) const;
     void prepare_roundtrip_metadata();

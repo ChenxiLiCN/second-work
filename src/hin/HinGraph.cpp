@@ -132,7 +132,8 @@ const std::vector<VertexId>& Transition::neighbors(VertexId vertex) const {
     return lists[vertex];
 }
 
-HinGraph HinGraph::load(const std::filesystem::path& dataset_directory) {
+HinGraph HinGraph::load(const std::filesystem::path& dataset_directory, double* relation_build_ms) {
+    if (relation_build_ms) *relation_build_ms = 0;
     HinGraph graph;
     const auto schema_file = dataset_directory / "base.txt";
     std::ifstream schema(schema_file);
@@ -170,10 +171,10 @@ HinGraph HinGraph::load(const std::filesystem::path& dataset_directory) {
         if (relation.source_type >= type_count || relation.target_type >= type_count) {
             throw data_error(schema_file, "relation refers to an unknown vertex type");
         }
-        relation.forward.resize(
-            static_cast<std::size_t>(graph.vertex_types_[relation.source_type].count));
-        relation.reverse.resize(
-            static_cast<std::size_t>(graph.vertex_types_[relation.target_type].count));
+        if (!relation_build_ms) {
+            relation.forward.resize(static_cast<std::size_t>(graph.vertex_types_[relation.source_type].count));
+            relation.reverse.resize(static_cast<std::size_t>(graph.vertex_types_[relation.target_type].count));
+        }
         graph.relations_.push_back(std::move(relation));
     }
 
@@ -202,14 +203,17 @@ HinGraph HinGraph::load(const std::filesystem::path& dataset_directory) {
 
         std::uint64_t source = 0;
         std::uint64_t target = 0;
+        std::vector<std::pair<VertexId,VertexId>> input_pairs;
+        if (relation_build_ms) input_pairs.reserve(relation.declared_edge_count);
         while (input >> source >> target) {
-            if (source >= relation.forward.size() || target >= relation.reverse.size()) {
+            if (source >= graph.vertex_types_[relation.source_type].count || target >= graph.vertex_types_[relation.target_type].count) {
                 throw data_error(edge_file, "edge endpoint is outside its type domain");
             }
-            relation.forward[static_cast<std::size_t>(source)].push_back(
-                static_cast<VertexId>(target));
-            relation.reverse[static_cast<std::size_t>(target)].push_back(
-                static_cast<VertexId>(source));
+            if (relation_build_ms) input_pairs.emplace_back(source,target);
+            else {
+                relation.forward[static_cast<std::size_t>(source)].push_back(static_cast<VertexId>(target));
+                relation.reverse[static_cast<std::size_t>(target)].push_back(static_cast<VertexId>(source));
+            }
             ++relation.loaded_edge_count;
         }
         if (!input.eof()) {
@@ -219,8 +223,19 @@ HinGraph HinGraph::load(const std::filesystem::path& dataset_directory) {
             throw data_error(edge_file,
                              "loaded edge count does not match the declared count");
         }
+        const auto organize_begin = std::chrono::steady_clock::now();
+        if (relation_build_ms) {
+            relation.forward.resize(graph.vertex_types_[relation.source_type].count);
+            relation.reverse.resize(graph.vertex_types_[relation.target_type].count);
+            for (const auto& edge : input_pairs) {
+                relation.forward[edge.first].push_back(edge.second);
+                relation.reverse[edge.second].push_back(edge.first);
+            }
+        }
         sort_and_deduplicate(relation.forward);
         sort_and_deduplicate(relation.reverse);
+        if (relation_build_ms) *relation_build_ms += std::chrono::duration<double,std::milli>(
+            std::chrono::steady_clock::now()-organize_begin).count();
     }
 
     return graph;

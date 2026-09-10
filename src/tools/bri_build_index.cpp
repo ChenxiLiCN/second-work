@@ -13,7 +13,12 @@ int main(int argc, char** argv) {
     }
     try {
         const auto begin = std::chrono::steady_clock::now();
+#ifdef HINSCAN_MEASURE_BUILD
+        double relation_build_ms = 0;
+        auto graph = hinscan::HinGraph::load(argv[1], &relation_build_ms);
+#else
         auto graph = hinscan::HinGraph::load(argv[1]);
+#endif
         const auto loaded = std::chrono::steady_clock::now();
 #ifdef HINSCAN_BUILD_ROUNDTRIP
         graph.prepare_roundtrip_metadata();
@@ -26,6 +31,10 @@ int main(int argc, char** argv) {
             edges += relation.loaded_edge_count;
         }
         std::cout << "vertex_types=" << graph.vertex_types().size() << '\n'
+#ifdef HINSCAN_MEASURE_BUILD
+                  << "offline_compute_ms=" << relation_build_ms << '\n'
+                  << "offline_timing_scope=adjacency_allocation_population_sort_dedup_from_buffered_pairs\n"
+#endif
                   << "relation_types=" << graph.relations().size() << '\n'
                   << "relation_edges=" << edges << '\n'
                   << "hin_load_ms="

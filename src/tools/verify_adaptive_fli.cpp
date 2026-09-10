@@ -146,6 +146,14 @@ int main(int argc, char** argv) {
             }
             const auto graph = HinGraph::load(dir);
             graph.save_binary(dir/"legacy.bri");
+            double organization_ms=0;
+            const auto measured_graph=HinGraph::load(dir,&organization_ms);
+            measured_graph.save_binary(dir/"measured.bri");
+            require(organization_ms>=0, "invalid offline compute timer");
+            for (std::size_t rid=0; rid<graph.relations().size(); ++rid)
+                require(graph.relations()[rid].forward==measured_graph.relations()[rid].forward &&
+                        graph.relations()[rid].reverse==measured_graph.relations()[rid].reverse,
+                        "measured loader changed graph");
             auto enhanced=HinGraph::load_binary(dir/"legacy.bri");
             enhanced.prepare_roundtrip_metadata();
             enhanced.save_binary(dir/"enhanced.bri");

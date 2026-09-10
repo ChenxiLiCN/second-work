@@ -104,6 +104,10 @@ add_executable(bri_build_index
     src/tools/bri_build_index.cpp
 )
 add_executable(bri_query_index src/tools/bri_query_index.cpp)
+add_executable(bri_build_measured src/tools/bri_build_index.cpp)
+target_compile_definitions(bri_build_measured PRIVATE HINSCAN_MEASURE_BUILD=1)
+target_link_libraries(bri_build_measured PRIVATE hin_io)
+set_target_properties(bri_build_measured PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_executable(bri_build_core_index src/tools/bri_build_index.cpp)
 target_compile_definitions(bri_build_core_index PRIVATE HINSCAN_BUILD_ROUNDTRIP=1)
 target_link_libraries(bri_build_core_index PRIVATE hin_io)
