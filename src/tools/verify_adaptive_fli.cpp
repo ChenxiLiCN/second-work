@@ -95,6 +95,7 @@ int main(int argc, char** argv) {
         std::uint64_t witness_accepts=0, witness_rejects=0, witness_hits=0;
         std::uint64_t witness_bitmap_checks=0;
         std::uint64_t single_complete=0, single_accept=0, single_reject=0;
+        std::uint64_t lean_sparse_clears=0, lean_full_writes=0, lean_cases=0;
         std::mt19937 random(20260905);
         const auto huge=std::numeric_limits<std::uint64_t>::max();
         const SimilarityThreshold unit{huge,huge};
@@ -175,18 +176,18 @@ int main(int argc, char** argv) {
                     require(factor.collect_closed_neighborhood(v)==expected[v], "factor neighborhood mismatch");
                 }
                 for (const std::uint64_t budget : {0ULL, 1ULL, 96ULL, 1024ULL, 1048576ULL}) {
-                    for (const unsigned bounds : {0U,1U,2U,3U,4U,5U,6U}) {
-                    ExactNeighborhoodCache cache(factor,budget,bounds!=0,bounds==2 || bounds==4,bounds==3 || bounds==4,bounds==5,bounds==6);
+                    for (const unsigned bounds : {0U,1U,2U,3U,4U,5U,6U,7U}) {
+                    ExactNeighborhoodCache cache(factor,budget,bounds!=0,bounds==2 || bounds==4,bounds==3 || bounds==4,bounds==5,bounds>=6,bounds==7);
                     for (VertexId u=0; u<n; ++u) {
                         cache.activate(u);
                         for (VertexId v=0; v<n; ++v) {
                             const auto c = common(expected[u], expected[v]);
                             std::uint64_t scan_limit=0;
-                            if (bounds==6) for (auto w:factor.witnesses(v)) scan_limit+=factor.posting(w).size();
+                            if (bounds>=6) for (auto w:factor.witnesses(v)) scan_limit+=factor.posting(w).size();
                             for (const std::uint64_t required : {std::uint64_t{0},c,c+1,std::uint64_t{n+1}}) {
                                 const auto before=cache.stats().streaming_posting_entries;
                                 require(cache.check(v,required)==(c>=required), "cache intersection mismatch");
-                                if (bounds==6) require(cache.stats().streaming_posting_entries-before<=scan_limit,
+                                if (bounds>=6) require(cache.stats().streaming_posting_entries-before<=scan_limit,
                                                        "single pass rescanned a posting");
                                 ++predicates;
                             }
@@ -204,12 +205,16 @@ int main(int argc, char** argv) {
                     witness_rejects += cache.stats().witness_bound_rejects;
                     witness_hits += cache.stats().witness_count_hits;
                     witness_bitmap_checks += cache.stats().witness_bitmap_checks;
-                    if (bounds==6) {
+                    if (bounds>=6) {
                         require(cache.stats().witness_counts_built==0 && cache.stats().witness_bound_checks==0,
                                 "single pass performed witness pre-scan");
                         single_complete+=cache.stats().single_pass_complete;
                         single_accept+=cache.stats().single_pass_early_accepts;
                         single_reject+=cache.stats().single_pass_early_rejects;
+                    }
+                    if (bounds==7) {
+                        lean_sparse_clears+=cache.stats().activation_sparse_words_cleared;
+                        lean_full_writes+=cache.stats().activation_full_words_written;
                     }
                     }
                     for (const auto* text : {"0.2","0.5","0.7","0.9","1.0"}) for (const std::uint64_t mu : {1ULL,2ULL,5ULL,300ULL}) {
@@ -231,6 +236,18 @@ int main(int argc, char** argv) {
                         compare(fresh,reference);
                         const auto single=run_pscan_on_fli(factor,eps,mu,budget,nullptr,nullptr,true,BlockExecutionMode::CoreSinglePass);
                         compare(single,reference);
+                        const auto lean=run_pscan_on_fli(factor,eps,mu,budget,nullptr,nullptr,true,BlockExecutionMode::CoreSinglePassLean);
+                        compare(lean,reference);
+                        compare(run_pscan_on_fli(prepared_factor,eps,mu,budget,nullptr,nullptr,true,BlockExecutionMode::CoreSinglePassLean),reference);
+                        lean_cases+=2;
+                        const auto& x=single.stats.adaptive_cache;
+                        const auto& y=lean.stats.adaptive_cache;
+                        require(x.hits==y.hits && x.misses==y.misses && x.evictions==y.evictions &&
+                                x.posting_entries==y.posting_entries && x.streaming_posting_entries==y.streaming_posting_entries &&
+                                x.single_pass_complete==y.single_pass_complete && x.single_pass_partial==y.single_pass_partial &&
+                                x.activation_calls==y.activation_calls, "lean changed cache/scanning policy");
+                        require(y.activation_full_words_written+y.activation_sparse_words_cleared<=x.activation_full_words_written &&
+                                y.streaming_bound_evaluations<=x.streaming_bound_evaluations, "lean increased maintenance work");
                         compare(run_pscan_on_fli(prepared_factor,eps,mu,budget,nullptr,nullptr,true,BlockExecutionMode::CoreSinglePass),reference);
                         require(single.stats.block_core_vertices==fresh.stats.block_core_vertices &&
                                 single.stats.certified_blocks==fresh.stats.certified_blocks,
@@ -254,13 +271,16 @@ int main(int argc, char** argv) {
                         require(fresh.stats.block_core_vertices>=old.stats.block_core_vertices,
                                 "connectivity certificate lost old cores");
                         if (fresh.stats.block_core_vertices>old.stats.block_core_vertices) ++new_core_cases;
-                        cluster_cases += 16;
+                        cluster_cases += 18;
                     }
                 }
                 std::cout << "fixture=" << fixture << " path=" << specification << " passed\n";
             }
         }
         require(new_core_cases>0, "stronger certificate never exercised");
+        require(lean_sparse_clears>0 && lean_full_writes>0, "lean activation branch coverage");
+        std::cout << "lean_cases=" << lean_cases << "\nlean_sparse_clears=" << lean_sparse_clears
+                  << "\nlean_full_writes=" << lean_full_writes << '\n';
         require(single_complete>0 && single_accept>0 && single_reject>0, "single pass branch coverage");
         std::cout << "single_pass_complete=" << single_complete << "\nsingle_pass_early_accepts=" << single_accept
                   << "\nsingle_pass_early_rejects=" << single_reject << '\n';

@@ -67,12 +67,13 @@ ExactNeighborhoodCache::ExactNeighborhoodCache(const FactorIndex& index,
                                                std::uint64_t byte_budget,
                                                bool witness_bounds, bool pressure_only,
                                                bool witness_bitmaps, bool witness_exclusion,
-                                               bool single_pass)
+                                               bool single_pass, bool lean_workspaces)
     : index_(index), budget_(byte_budget), rows_(index.vertex_count()),
       previous_(index.vertex_count(), missing), next_(index.vertex_count(), missing),
       scratch_((index.vertex_count() + 63) / 64, 0), active_(scratch_.size(), 0) {
     const auto start = std::chrono::steady_clock::now();
     single_pass_ = single_pass;
+    lean_workspaces_ = lean_workspaces;
     witness_bounds_ = witness_bounds && !single_pass_;
     pressure_only_ = pressure_only;
     witness_exclusion_ = witness_exclusion;
@@ -238,6 +239,7 @@ const ExactNeighborhoodCache::Row& ExactNeighborhoodCache::admit(
 }
 
 void ExactNeighborhoodCache::activate(VertexId v) {
+    ++stats_.activation_calls;
     if (witness_bounds_ && active_vertex_ != canonical_[v]) {
         if (++witness_epoch_ == 0) {
             std::fill(witness_epochs_.begin(), witness_epochs_.end(), 0);
@@ -248,12 +250,25 @@ void ExactNeighborhoodCache::activate(VertexId v) {
     const auto& row = get(v);
     if (row.kind == Kind::DenseBitmap) {
         active_ = row.words;
+        stats_.activation_full_words_written += active_.size();
+        if (lean_workspaces_) { active_dense_ = true; active_touched_.clear(); }
     } else {
-        std::fill(active_.begin(), active_.end(), 0);
-        if (row.kind == Kind::List) {
-            for (const auto id : row.ids)
-                active_[id >> 6U] |= std::uint64_t{1} << (id & 63U);
+        if (!lean_workspaces_ || active_dense_) {
+            std::fill(active_.begin(), active_.end(), 0);
+            stats_.activation_full_words_written += active_.size();
         } else {
+            for (const auto word : active_touched_) active_[word] = 0;
+            stats_.activation_sparse_words_cleared += active_touched_.size();
+        }
+        if (lean_workspaces_) { active_dense_ = false; active_touched_.clear(); }
+        if (row.kind == Kind::List) {
+            for (const auto id : row.ids) {
+                if (lean_workspaces_ && active_[id >> 6U] == 0)
+                    active_touched_.push_back(id >> 6U);
+                active_[id >> 6U] |= std::uint64_t{1} << (id & 63U);
+            }
+        } else {
+            if (lean_workspaces_) active_touched_.assign(row.ids.begin(), row.ids.end());
             for (std::size_t i = 0; i < row.ids.size(); ++i)
                 active_[row.ids[i]] = row.words[i];
         }
@@ -416,6 +431,7 @@ bool ExactNeighborhoodCache::check(VertexId right, std::uint64_t required) {
         touched_.clear();
         std::uint64_t seen = 0, found = 0, scanned = 0;
         const auto degree = index_.degree(right_vertex);
+        const auto left_degree = lean_workspaces_ ? index_.degree(active_vertex_) : 0;
         // Preserve reuse when free cache already accommodates a complete row.
         // Fuse its construction with the intersection instead of stopping early
         // and repeatedly rebuilding the same partial neighborhood. Under pressure
@@ -426,11 +442,12 @@ bool ExactNeighborhoodCache::check(VertexId right, std::uint64_t required) {
         auto visit = [&](VertexId v) {
             const auto word = v >> 6U;
             const auto bit = std::uint64_t{1} << (v & 63U);
-            if (scratch_[word] & bit) return;
+            if (scratch_[word] & bit) return false;
             if (scratch_[word] == 0) touched_.push_back(word);
             scratch_[word] |= bit;
             ++seen;
             found += (active_[word] & bit) != 0;
+            return true;
         };
         auto finish = [&](bool answer, std::uint64_t upper) {
             remember(found, upper);
@@ -453,17 +470,20 @@ bool ExactNeighborhoodCache::check(VertexId right, std::uint64_t required) {
         };
         visit(right_vertex);
         if (single_pass_ && !populate) {
-            const auto upper = std::min(index_.degree(active_vertex_), found + degree - seen);
+            ++stats_.streaming_bound_evaluations;
+            const auto upper = std::min(lean_workspaces_ ? left_degree : index_.degree(active_vertex_), found + degree - seen);
             if (found >= required) return finish(true, upper);
             if (upper < required) return finish(false, upper);
         }
         for (const auto w : index_.witnesses(right_vertex)) {
             for (const auto v : index_.posting(w)) {
-                visit(v);
+                const bool fresh = visit(v);
                 ++scanned;
-                if (single_pass_ ? !populate : (scanned & 63U) == 0) {
+                if (!fresh) ++stats_.streaming_duplicate_visits;
+                if ((!lean_workspaces_ || fresh) && (single_pass_ ? !populate : (scanned & 63U) == 0)) {
+                    ++stats_.streaming_bound_evaluations;
                     const auto upper = single_pass_
-                        ? std::min(index_.degree(active_vertex_), found + degree - seen)
+                        ? std::min(lean_workspaces_ ? left_degree : index_.degree(active_vertex_), found + degree - seen)
                         : found + degree - seen;
                     if (found >= required) return finish(true, upper);
                     if (upper < required) return finish(false, upper);
@@ -501,7 +521,7 @@ bool ExactNeighborhoodCache::check(VertexId right, std::uint64_t required) {
 
 std::uint64_t ExactNeighborhoodCache::workspace_bytes() const {
     return rows_.capacity() * sizeof(std::unique_ptr<Row>) +
-           (previous_.capacity() + next_.capacity() + touched_.capacity() + canonical_.capacity()) * sizeof(VertexId) +
+           (previous_.capacity() + next_.capacity() + touched_.capacity() + canonical_.capacity() + active_touched_.capacity()) * sizeof(VertexId) +
            (scratch_.capacity() + active_.capacity() + witness_counts_.capacity()) * sizeof(std::uint64_t) +
            witness_epochs_.capacity() * sizeof(std::uint32_t) +
            witness_rows_.capacity() * sizeof(std::unique_ptr<Row>) +

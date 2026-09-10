@@ -46,7 +46,8 @@ int main(int argc, char** argv) {
         const auto& q = result.stats;
         std::cout << "index_mode=base_relation_on_demand_fli\n"
                   << "block_mode=" << HINSCAN_BLOCK_MODE << '\n'
-                  << "single_pass=" << (HINSCAN_BLOCK_MODE == 10) << '\n'
+                  << "single_pass=" << (HINSCAN_BLOCK_MODE == 10 || HINSCAN_BLOCK_MODE == 11) << '\n'
+                  << "lean_workspaces=" << (HINSCAN_BLOCK_MODE == 11) << '\n'
                   << "used_roundtrip_metadata=" << f.used_roundtrip_metadata << '\n'
                   << "cache_budget_mib=" << HINSCAN_CACHE_MIB << '\n'
                   << "block_discovery_ms=" << q.block_discovery_ms << '\n'
@@ -88,6 +89,11 @@ int main(int argc, char** argv) {
                   << "adaptive_streaming_checks=" << q.adaptive_cache.streaming_checks << '\n'
                   << "single_pass_complete=" << q.adaptive_cache.single_pass_complete << '\n'
                   << "single_pass_partial=" << q.adaptive_cache.single_pass_partial << '\n'
+                  << "activation_calls=" << q.adaptive_cache.activation_calls << '\n'
+                  << "activation_full_words_written=" << q.adaptive_cache.activation_full_words_written << '\n'
+                  << "activation_sparse_words_cleared=" << q.adaptive_cache.activation_sparse_words_cleared << '\n'
+                  << "streaming_bound_evaluations=" << q.adaptive_cache.streaming_bound_evaluations << '\n'
+                  << "streaming_duplicate_visits=" << q.adaptive_cache.streaming_duplicate_visits << '\n'
                   << "single_pass_early_accepts=" << q.adaptive_cache.single_pass_early_accepts << '\n'
                   << "single_pass_early_rejects=" << q.adaptive_cache.single_pass_early_rejects << '\n'
                   << "adaptive_list_checks=" << q.adaptive_cache.list_checks << '\n'

@@ -14,7 +14,7 @@
 namespace hinscan {
 
 // Experimental execution variants; the default remains the verified V11 path.
-enum class BlockExecutionMode { Disabled, SeedOnly, SkipCertified, WitnessBounds, AdaptiveWitnessBounds, WitnessBitmaps, WitnessExclusion, LazyNoWitness, LazyAlwaysExclusion, CoreConnectivity, CoreSinglePass };
+enum class BlockExecutionMode { Disabled, SeedOnly, SkipCertified, WitnessBounds, AdaptiveWitnessBounds, WitnessBitmaps, WitnessExclusion, LazyNoWitness, LazyAlwaysExclusion, CoreConnectivity, CoreSinglePass, CoreSinglePassLean };
 
 enum class PscanVertexRole {
     Core,

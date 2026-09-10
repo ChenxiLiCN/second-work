@@ -26,6 +26,9 @@ struct ExactNeighborhoodCacheStats {
     std::uint64_t single_pass_complete = 0, single_pass_partial = 0;
     std::uint64_t single_pass_early_accepts = 0, single_pass_early_rejects = 0;
     std::uint64_t witness_exclusion_rejects = 0;
+    std::uint64_t activation_calls = 0, activation_full_words_written = 0;
+    std::uint64_t activation_sparse_words_cleared = 0;
+    std::uint64_t streaming_bound_evaluations = 0, streaming_duplicate_visits = 0;
 };
 
 // Query-local exact neighborhoods. No pair similarities or query parameters
@@ -35,7 +38,7 @@ public:
     ExactNeighborhoodCache(const FactorIndex& index, std::uint64_t byte_budget,
                            bool witness_bounds = false, bool pressure_only = false,
                            bool witness_bitmaps = false, bool witness_exclusion = false,
-                           bool single_pass = false);
+                           bool single_pass = false, bool lean_workspaces = false);
     void activate(VertexId vertex);
     bool check(VertexId right, std::uint64_t required);
     const ExactNeighborhoodCacheStats& stats() const { return stats_; }
@@ -69,6 +72,7 @@ private:
     bool pressure_only_ = false;
     bool witness_exclusion_ = false;
     bool single_pass_ = false;
+    bool lean_workspaces_ = false, active_dense_ = false;
     std::vector<std::uint64_t> witness_counts_;
     std::vector<std::uint32_t> witness_epochs_;
     std::uint32_t witness_epoch_ = 0;
@@ -87,6 +91,7 @@ private:
     std::unique_ptr<Row> transient_;
     std::vector<std::uint64_t> scratch_, active_;
     std::vector<VertexId> touched_;
+    std::vector<VertexId> active_touched_;
     ExactNeighborhoodCacheStats stats_;
 };
 
