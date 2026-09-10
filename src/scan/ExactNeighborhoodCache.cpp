@@ -66,12 +66,14 @@ BitmapCounter bitmap_counter() {
 ExactNeighborhoodCache::ExactNeighborhoodCache(const FactorIndex& index,
                                                std::uint64_t byte_budget,
                                                bool witness_bounds, bool pressure_only,
-                                               bool witness_bitmaps, bool witness_exclusion)
+                                               bool witness_bitmaps, bool witness_exclusion,
+                                               bool single_pass)
     : index_(index), budget_(byte_budget), rows_(index.vertex_count()),
       previous_(index.vertex_count(), missing), next_(index.vertex_count(), missing),
       scratch_((index.vertex_count() + 63) / 64, 0), active_(scratch_.size(), 0) {
     const auto start = std::chrono::steady_clock::now();
-    witness_bounds_ = witness_bounds;
+    single_pass_ = single_pass;
+    witness_bounds_ = witness_bounds && !single_pass_;
     pressure_only_ = pressure_only;
     witness_exclusion_ = witness_exclusion;
     if (witness_bitmaps) {
@@ -167,6 +169,14 @@ ExactNeighborhoodCache::generate(VertexId vertex) {
         stats_.posting_entries += posting.size();
         for (const auto candidate : posting) visit(candidate);
     }
+    auto row = encode_scratch(vertex);
+    stats_.generation_ms += std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - start).count();
+    return row;
+}
+
+std::unique_ptr<ExactNeighborhoodCache::Row>
+ExactNeighborhoodCache::encode_scratch(VertexId vertex) {
     auto row = std::make_unique<Row>();
     row->degree = index_.degree(vertex);
     const auto list_bytes = row->degree * sizeof(VertexId);
@@ -192,8 +202,6 @@ ExactNeighborhoodCache::generate(VertexId vertex) {
         if (row->ids.size() != row->degree)
             throw std::logic_error("cached neighborhood disagrees with FLI degree");
     }
-    stats_.generation_ms += std::chrono::duration<double, std::milli>(
-        std::chrono::steady_clock::now() - start).count();
     return row;
 }
 
@@ -205,7 +213,11 @@ const ExactNeighborhoodCache::Row& ExactNeighborhoodCache::get(VertexId v) {
         return *rows_[v];
     }
     ++stats_.misses;
-    auto row = generate(v);
+    return admit(v, generate(v));
+}
+
+const ExactNeighborhoodCache::Row& ExactNeighborhoodCache::admit(
+    VertexId v, std::unique_ptr<Row> row) {
     const auto size = row->bytes();
     if (size > budget_) {
         transient_ = std::move(row);
@@ -396,7 +408,7 @@ bool ExactNeighborhoodCache::check(VertexId right, std::uint64_t required) {
     // Stream that row with exact distinct-unseen bounds. Left rows still enter
     // the cache, so subsequent reuse can return to the cached path naturally.
     HIN_PROFILE_SCOPE(FullIntersection);
-    if (!rows_[right_vertex] && pressure) {
+    if (!rows_[right_vertex] && (single_pass_ || pressure)) {
         const auto started = std::chrono::steady_clock::now();
         ++stats_.misses;
         ++stats_.streaming_checks;
@@ -404,6 +416,13 @@ bool ExactNeighborhoodCache::check(VertexId right, std::uint64_t required) {
         touched_.clear();
         std::uint64_t seen = 0, found = 0, scanned = 0;
         const auto degree = index_.degree(right_vertex);
+        // Preserve reuse when free cache already accommodates a complete row.
+        // Fuse its construction with the intersection instead of stopping early
+        // and repeatedly rebuilding the same partial neighborhood. Under pressure
+        // no eviction is required merely to finish an already decided predicate.
+        const auto row_bound = sizeof(Row) + std::min(
+            degree * sizeof(VertexId), scratch_.size() * sizeof(std::uint64_t));
+        const bool populate = single_pass_ && row_bound <= budget_ - bytes_;
         auto visit = [&](VertexId v) {
             const auto word = v >> 6U;
             const auto bit = std::uint64_t{1} << (v & 63U);
@@ -415,18 +434,37 @@ bool ExactNeighborhoodCache::check(VertexId right, std::uint64_t required) {
         };
         auto finish = [&](bool answer, std::uint64_t upper) {
             remember(found, upper);
+            if (single_pass_) {
+                if (seen == degree) {
+                    ++stats_.single_pass_complete;
+                    // Scratch is the COMPLETE union. Encode it, never regenerate
+                    // the posting lists. Admission may evict rows, not active_.
+                    admit(right_vertex, encode_scratch(right_vertex));
+                } else {
+                    ++stats_.single_pass_partial;
+                    if (answer) ++stats_.single_pass_early_accepts;
+                    else ++stats_.single_pass_early_rejects;
+                }
+            }
             stats_.streaming_posting_entries += scanned;
             stats_.streaming_ms += std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - started).count();
             return answer;
         };
         visit(right_vertex);
+        if (single_pass_ && !populate) {
+            const auto upper = std::min(index_.degree(active_vertex_), found + degree - seen);
+            if (found >= required) return finish(true, upper);
+            if (upper < required) return finish(false, upper);
+        }
         for (const auto w : index_.witnesses(right_vertex)) {
             for (const auto v : index_.posting(w)) {
                 visit(v);
                 ++scanned;
-                if ((scanned & 63U) == 0) {
-                    const auto upper = found + degree - seen;
+                if (single_pass_ ? !populate : (scanned & 63U) == 0) {
+                    const auto upper = single_pass_
+                        ? std::min(index_.degree(active_vertex_), found + degree - seen)
+                        : found + degree - seen;
                     if (found >= required) return finish(true, upper);
                     if (upper < required) return finish(false, upper);
                 }

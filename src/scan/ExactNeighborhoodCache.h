@@ -23,6 +23,8 @@ struct ExactNeighborhoodCacheStats {
     std::uint64_t witness_bitmap_bytes = 0, witness_bitmap_build_entries = 0;
     std::uint64_t witness_bitmap_checks = 0, witness_bitmap_words = 0;
     double witness_bitmap_build_ms = 0;
+    std::uint64_t single_pass_complete = 0, single_pass_partial = 0;
+    std::uint64_t single_pass_early_accepts = 0, single_pass_early_rejects = 0;
     std::uint64_t witness_exclusion_rejects = 0;
 };
 
@@ -32,7 +34,8 @@ class ExactNeighborhoodCache {
 public:
     ExactNeighborhoodCache(const FactorIndex& index, std::uint64_t byte_budget,
                            bool witness_bounds = false, bool pressure_only = false,
-                           bool witness_bitmaps = false, bool witness_exclusion = false);
+                           bool witness_bitmaps = false, bool witness_exclusion = false,
+                           bool single_pass = false);
     void activate(VertexId vertex);
     bool check(VertexId right, std::uint64_t required);
     const ExactNeighborhoodCacheStats& stats() const { return stats_; }
@@ -55,6 +58,8 @@ private:
     void unlink(VertexId vertex);
     void touch(VertexId vertex);
     std::unique_ptr<Row> generate(VertexId vertex);
+    std::unique_ptr<Row> encode_scratch(VertexId vertex);
+    const Row& admit(VertexId vertex, std::unique_ptr<Row> row);
     struct PairBound {
         std::uint64_t key = ~std::uint64_t{0};
         std::uint64_t lower = 0, upper = ~std::uint64_t{0};
@@ -63,6 +68,7 @@ private:
     bool witness_bounds_ = false;
     bool pressure_only_ = false;
     bool witness_exclusion_ = false;
+    bool single_pass_ = false;
     std::vector<std::uint64_t> witness_counts_;
     std::vector<std::uint32_t> witness_epochs_;
     std::uint32_t witness_epoch_ = 0;

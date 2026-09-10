@@ -46,6 +46,7 @@ int main(int argc, char** argv) {
         const auto& q = result.stats;
         std::cout << "index_mode=base_relation_on_demand_fli\n"
                   << "block_mode=" << HINSCAN_BLOCK_MODE << '\n'
+                  << "single_pass=" << (HINSCAN_BLOCK_MODE == 10) << '\n'
                   << "used_roundtrip_metadata=" << f.used_roundtrip_metadata << '\n'
                   << "cache_budget_mib=" << HINSCAN_CACHE_MIB << '\n'
                   << "block_discovery_ms=" << q.block_discovery_ms << '\n'
@@ -85,6 +86,10 @@ int main(int argc, char** argv) {
                   << "adaptive_pair_bound_hits=" << q.adaptive_cache.pair_bound_hits << '\n'
                   << "adaptive_pair_bound_bytes=" << q.adaptive_cache.pair_bound_bytes << '\n'
                   << "adaptive_streaming_checks=" << q.adaptive_cache.streaming_checks << '\n'
+                  << "single_pass_complete=" << q.adaptive_cache.single_pass_complete << '\n'
+                  << "single_pass_partial=" << q.adaptive_cache.single_pass_partial << '\n'
+                  << "single_pass_early_accepts=" << q.adaptive_cache.single_pass_early_accepts << '\n'
+                  << "single_pass_early_rejects=" << q.adaptive_cache.single_pass_early_rejects << '\n'
                   << "adaptive_list_checks=" << q.adaptive_cache.list_checks << '\n'
                   << "adaptive_bitmap_checks=" << q.adaptive_cache.bitmap_checks << '\n'
                   << "adaptive_full_checks=" << (q.adaptive_cache.streaming_checks + q.adaptive_cache.list_checks + q.adaptive_cache.bitmap_checks) << '\n'

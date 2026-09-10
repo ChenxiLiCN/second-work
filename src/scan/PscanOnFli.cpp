@@ -504,13 +504,15 @@ public:
         if (adaptive_neighborhoods)
             adaptive_cache_ = std::make_unique<ExactNeighborhoodCache>(index, neighborhood_cache_bytes,
                 block_mode >= BlockExecutionMode::WitnessBounds &&
+                    block_mode != BlockExecutionMode::CoreSinglePass &&
                     block_mode != BlockExecutionMode::LazyNoWitness,
                 block_mode >= BlockExecutionMode::AdaptiveWitnessBounds &&
                     block_mode != BlockExecutionMode::LazyAlwaysExclusion,
                 block_mode == BlockExecutionMode::WitnessBitmaps,
                 block_mode == BlockExecutionMode::WitnessExclusion ||
                     block_mode == BlockExecutionMode::LazyAlwaysExclusion ||
-                    block_mode == BlockExecutionMode::CoreConnectivity);
+                    block_mode == BlockExecutionMode::CoreConnectivity,
+                block_mode == BlockExecutionMode::CoreSinglePass);
         stats_.timestamp_workspace_bytes = similarity_workspace_.bytes();
         if (fingerprint_index_ != nullptr) {
             if (fingerprint_index_->vertex_count() != index_.vertex_count()) {
@@ -625,7 +627,8 @@ private:
             // Every pair in a posting shares at least |posting| closed neighbors.
             // Legacy mode proves a clique. Connectivity mode proves each prefix
             // vertex core and similar to its minimum-degree anchor, not a clique.
-            const bool connectivity = block_mode_ == BlockExecutionMode::CoreConnectivity;
+            const bool connectivity = block_mode_ == BlockExecutionMode::CoreConnectivity ||
+                                      block_mode_ == BlockExecutionMode::CoreSinglePass;
             if (connectivity && posting.size() <= mu_) continue;
             std::uint64_t partner=0;
             if (connectivity) {

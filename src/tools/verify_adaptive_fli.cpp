@@ -94,6 +94,7 @@ int main(int argc, char** argv) {
         std::uint64_t streaming_checks=0, pair_bound_hits=0, equal_factor_checks=0;
         std::uint64_t witness_accepts=0, witness_rejects=0, witness_hits=0;
         std::uint64_t witness_bitmap_checks=0;
+        std::uint64_t single_complete=0, single_accept=0, single_reject=0;
         std::mt19937 random(20260905);
         const auto huge=std::numeric_limits<std::uint64_t>::max();
         const SimilarityThreshold unit{huge,huge};
@@ -174,14 +175,19 @@ int main(int argc, char** argv) {
                     require(factor.collect_closed_neighborhood(v)==expected[v], "factor neighborhood mismatch");
                 }
                 for (const std::uint64_t budget : {0ULL, 1ULL, 96ULL, 1024ULL, 1048576ULL}) {
-                    for (const unsigned bounds : {0U,1U,2U,3U,4U,5U}) {
-                    ExactNeighborhoodCache cache(factor,budget,bounds!=0,bounds==2 || bounds==4,bounds==3 || bounds==4,bounds==5);
+                    for (const unsigned bounds : {0U,1U,2U,3U,4U,5U,6U}) {
+                    ExactNeighborhoodCache cache(factor,budget,bounds!=0,bounds==2 || bounds==4,bounds==3 || bounds==4,bounds==5,bounds==6);
                     for (VertexId u=0; u<n; ++u) {
                         cache.activate(u);
                         for (VertexId v=0; v<n; ++v) {
                             const auto c = common(expected[u], expected[v]);
+                            std::uint64_t scan_limit=0;
+                            if (bounds==6) for (auto w:factor.witnesses(v)) scan_limit+=factor.posting(w).size();
                             for (const std::uint64_t required : {std::uint64_t{0},c,c+1,std::uint64_t{n+1}}) {
+                                const auto before=cache.stats().streaming_posting_entries;
                                 require(cache.check(v,required)==(c>=required), "cache intersection mismatch");
+                                if (bounds==6) require(cache.stats().streaming_posting_entries-before<=scan_limit,
+                                                       "single pass rescanned a posting");
                                 ++predicates;
                             }
                         }
@@ -198,6 +204,13 @@ int main(int argc, char** argv) {
                     witness_rejects += cache.stats().witness_bound_rejects;
                     witness_hits += cache.stats().witness_count_hits;
                     witness_bitmap_checks += cache.stats().witness_bitmap_checks;
+                    if (bounds==6) {
+                        require(cache.stats().witness_counts_built==0 && cache.stats().witness_bound_checks==0,
+                                "single pass performed witness pre-scan");
+                        single_complete+=cache.stats().single_pass_complete;
+                        single_accept+=cache.stats().single_pass_early_accepts;
+                        single_reject+=cache.stats().single_pass_early_rejects;
+                    }
                     }
                     for (const auto* text : {"0.2","0.5","0.7","0.9","1.0"}) for (const std::uint64_t mu : {1ULL,2ULL,5ULL,300ULL}) {
                         const auto eps = SimilarityThreshold::parse(text);
@@ -216,6 +229,12 @@ int main(int argc, char** argv) {
                         compare(run_pscan_on_fli(factor,eps,mu,budget,nullptr,nullptr,true,BlockExecutionMode::LazyAlwaysExclusion),reference);
                         const auto fresh=run_pscan_on_fli(factor,eps,mu,budget,nullptr,nullptr,true,BlockExecutionMode::CoreConnectivity);
                         compare(fresh,reference);
+                        const auto single=run_pscan_on_fli(factor,eps,mu,budget,nullptr,nullptr,true,BlockExecutionMode::CoreSinglePass);
+                        compare(single,reference);
+                        compare(run_pscan_on_fli(prepared_factor,eps,mu,budget,nullptr,nullptr,true,BlockExecutionMode::CoreSinglePass),reference);
+                        require(single.stats.block_core_vertices==fresh.stats.block_core_vertices &&
+                                single.stats.certified_blocks==fresh.stats.certified_blocks,
+                                "single pass changed core block certificates");
                         compare(run_pscan_on_fli(prepared_factor,eps,mu,budget,nullptr,nullptr,true,BlockExecutionMode::CoreConnectivity),reference);
                         const auto regional=run_region_completion(relations,eps,mu,budget);
                         compare(regional.clustering,reference);
@@ -235,13 +254,16 @@ int main(int argc, char** argv) {
                         require(fresh.stats.block_core_vertices>=old.stats.block_core_vertices,
                                 "connectivity certificate lost old cores");
                         if (fresh.stats.block_core_vertices>old.stats.block_core_vertices) ++new_core_cases;
-                        cluster_cases += 14;
+                        cluster_cases += 16;
                     }
                 }
                 std::cout << "fixture=" << fixture << " path=" << specification << " passed\n";
             }
         }
         require(new_core_cases>0, "stronger certificate never exercised");
+        require(single_complete>0 && single_accept>0 && single_reject>0, "single pass branch coverage");
+        std::cout << "single_pass_complete=" << single_complete << "\nsingle_pass_early_accepts=" << single_accept
+                  << "\nsingle_pass_early_rejects=" << single_reject << '\n';
         require(resolved_cases>0 && fallback_cases>0, "missing region branch coverage");
         std::cout << "region_cases=" << region_cases << "\nregion_resolved_cases=" << resolved_cases
                   << "\nregion_fallback_cases=" << fallback_cases << '\n';
