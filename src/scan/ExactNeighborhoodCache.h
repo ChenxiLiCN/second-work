@@ -2,12 +2,15 @@
 #define HINSCAN_EXACT_NEIGHBORHOOD_CACHE_H
 
 #include "index/FactorIndex.h"
+#include "scan/HotspotDiagnostics.h"
 #include <memory>
 #include <vector>
 
 namespace hinscan {
 
 struct ExactNeighborhoodCacheStats {
+    // Always present for ABI consistency; allocated only in diagnostic builds.
+    std::shared_ptr<HotspotTrace> hotspots;
     std::uint64_t hits = 0, misses = 0, evictions = 0;
     std::uint64_t posting_entries = 0, peak_bytes = 0;
     std::uint64_t list_checks = 0, bitmap_checks = 0, intersection_units = 0;

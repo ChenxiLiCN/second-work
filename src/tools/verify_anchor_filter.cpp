@@ -6,6 +6,7 @@
 #include <limits>
 #include <random>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 
 using namespace hinscan;
@@ -68,6 +69,30 @@ void compare(const PscanOnFliResult& a,const PscanOnFliResult& b) {
     require(a.noncore_clusters==b.noncore_clusters,"noncore memberships mismatch");
     require(a.roles==b.roles,"roles mismatch");
 }
+#ifdef HINSCAN_HOTSPOTS
+void verify_report(const FactorIndex& f,const std::filesystem::path& dir) {
+    std::ifstream input(dir/"hotspots.tsv");
+    require(bool(input),"missing hotspot details");
+    std::string line; std::getline(input,line);
+    while (std::getline(input,line)) {
+        std::istringstream stream(line);std::vector<std::string> fields;std::string value;
+        while (std::getline(stream,value,'\t')) fields.push_back(value);
+        require(fields.size()==22,"hotspot TSV column mismatch");
+        if (fields[13]!="1") continue;
+        const auto u=static_cast<VertexId>(std::stoul(fields[1]));
+        auto ws=f.witnesses(u);
+        std::sort(ws.begin(),ws.end(),[&](auto a,auto b) {
+            return f.posting(a).size()!=f.posting(b).size()?f.posting(a).size()>f.posting(b).size():a<b;
+        });
+        std::set<VertexId> members;
+        for (std::size_t i=0;i<4;++i) {
+            if (i<ws.size()) members.insert(f.posting(ws[i]).begin(),f.posting(ws[i]).end());
+            if (i==0 || i==1 || i==3)
+                require(members.size()==std::stoull(fields[i==3?16:14+i]),"exact coverage mismatch");
+        }
+    }
+}
+#endif
 }
 int main(int argc,char** argv) {
     try {
@@ -132,6 +157,25 @@ int main(int argc,char** argv) {
                         const auto control=run_pscan_on_fli(f,threshold,mu,bytes,nullptr,nullptr,true,BlockExecutionMode::CoreSinglePassLean);
                         const auto trial=run_pscan_on_fli(f,threshold,mu,bytes,nullptr,nullptr,true,BlockExecutionMode::CoreAnchor);
                         compare(control,truth); compare(trial,truth);
+#ifdef HINSCAN_HOTSPOTS
+                        for (const auto* result:{&control,&trial}) {
+                            const auto& stats=result->stats.adaptive_cache;
+                            require(bool(stats.hotspots),"missing hotspot trace");
+                            std::uint64_t se=0,ge=0,sc=0,pc=0;
+                            for (const auto& row:stats.hotspots->rows) {
+                                se+=row.stream_entries; ge+=row.generation_entries;
+                                sc+=row.stream_calls; pc+=row.partial_calls;
+                            }
+                            require(se==stats.streaming_posting_entries && ge==stats.posting_entries,
+                                    "hotspot scan accounting mismatch");
+                            require(sc==stats.streaming_checks && pc==stats.single_pass_partial,
+                                    "hotspot call accounting mismatch");
+                        }
+                        if (std::string(eps)=="0.9" && mu==5 && bytes==4096) {
+                            write_hotspot_report(f,*control.stats.adaptive_cache.hotspots,dir/(std::string(text)+"-report"));
+                            verify_report(f,dir/(std::string(text)+"-report"));
+                        }
+#endif
                         require(trial.stats.anchor.calls==trial.stats.exact_similarity_checks+trial.stats.anchor.rejects,
                                 "full-check accounting");
                         integrated_rejects+=trial.stats.anchor.rejects; ++clusters;

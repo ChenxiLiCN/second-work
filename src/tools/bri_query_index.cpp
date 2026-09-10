@@ -44,6 +44,12 @@ int main(int argc, char** argv) {
         const auto saved = Clock::now();
         const auto& f = factor.stats();
         const auto& q = result.stats;
+#ifdef HINSCAN_HOTSPOTS
+        if (!q.adaptive_cache.hotspots) throw std::logic_error("missing diagnostic trace");
+        const auto report_start=Clock::now();
+        hinscan::write_hotspot_report(factor,*q.adaptive_cache.hotspots,argv[5]);
+        std::cout<<"hotspot_diagnostic=1\nhotspot_report_ms="<<ms(Clock::now()-report_start)<<'\n';
+#endif
         std::cout << "index_mode=base_relation_on_demand_fli\n"
                   << "block_mode=" << HINSCAN_BLOCK_MODE << '\n'
                   << "single_pass=" << (HINSCAN_BLOCK_MODE == 10 || HINSCAN_BLOCK_MODE == 11 || HINSCAN_BLOCK_MODE == 12) << '\n'

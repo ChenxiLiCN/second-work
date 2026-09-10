@@ -73,6 +73,9 @@ ExactNeighborhoodCache::ExactNeighborhoodCache(const FactorIndex& index,
       scratch_((index.vertex_count() + 63) / 64, 0), active_(scratch_.size(), 0) {
     const auto start = std::chrono::steady_clock::now();
     single_pass_ = single_pass;
+#ifdef HINSCAN_HOTSPOTS
+    stats_.hotspots=std::make_shared<HotspotTrace>(index.vertex_count());
+#endif
     lean_workspaces_ = lean_workspaces;
     witness_bounds_ = witness_bounds && !single_pass_;
     pressure_only_ = pressure_only;
@@ -157,6 +160,9 @@ void ExactNeighborhoodCache::touch(VertexId v) {
 std::unique_ptr<ExactNeighborhoodCache::Row>
 ExactNeighborhoodCache::generate(VertexId vertex) {
     const auto start = std::chrono::steady_clock::now();
+#ifdef HINSCAN_HOTSPOTS
+    const auto before_entries=stats_.posting_entries;
+#endif
     for (const auto word : touched_) scratch_[word] = 0;
     touched_.clear();
     auto visit = [&](VertexId candidate) {
@@ -171,8 +177,15 @@ ExactNeighborhoodCache::generate(VertexId vertex) {
         for (const auto candidate : posting) visit(candidate);
     }
     auto row = encode_scratch(vertex);
-    stats_.generation_ms += std::chrono::duration<double, std::milli>(
+    const auto elapsed=std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - start).count();
+    stats_.generation_ms+=elapsed;
+#ifdef HINSCAN_HOTSPOTS
+    auto& work=stats_.hotspots->rows[vertex];
+    ++work.generation_calls;
+    work.generation_entries+=stats_.posting_entries-before_entries;
+    work.generation_ms+=elapsed;
+#endif
     return row;
 }
 
@@ -464,8 +477,16 @@ bool ExactNeighborhoodCache::check(VertexId right, std::uint64_t required) {
                 }
             }
             stats_.streaming_posting_entries += scanned;
-            stats_.streaming_ms += std::chrono::duration<double, std::milli>(
+            const auto elapsed=std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - started).count();
+            stats_.streaming_ms+=elapsed;
+#ifdef HINSCAN_HOTSPOTS
+            auto& work=stats_.hotspots->rows[right_vertex];
+            ++work.stream_calls;
+            work.stream_entries+=scanned;
+            work.partial_calls+=seen!=degree;
+            work.stream_ms+=elapsed;
+#endif
             return answer;
         };
         visit(right_vertex);
@@ -494,6 +515,9 @@ bool ExactNeighborhoodCache::check(VertexId right, std::uint64_t required) {
         return finish(found >= required, found);
     }
     const auto& row = get(right);
+#ifdef HINSCAN_HOTSPOTS
+    ++stats_.hotspots->rows[right_vertex].cached_checks;
+#endif
     std::uint64_t common = 0;
     if (row.kind == Kind::List) {
         ++stats_.list_checks;
