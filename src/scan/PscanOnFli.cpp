@@ -504,6 +504,7 @@ public:
         if (adaptive_neighborhoods)
             adaptive_cache_ = std::make_unique<ExactNeighborhoodCache>(index, neighborhood_cache_bytes,
                 block_mode >= BlockExecutionMode::WitnessBounds &&
+                    block_mode != BlockExecutionMode::CoreAnchor &&
                     block_mode != BlockExecutionMode::CoreSinglePassLean &&
                     block_mode != BlockExecutionMode::CoreSinglePass &&
                     block_mode != BlockExecutionMode::LazyNoWitness,
@@ -513,8 +514,10 @@ public:
                 block_mode == BlockExecutionMode::WitnessExclusion ||
                     block_mode == BlockExecutionMode::LazyAlwaysExclusion ||
                     block_mode == BlockExecutionMode::CoreConnectivity,
-                block_mode == BlockExecutionMode::CoreSinglePass || block_mode == BlockExecutionMode::CoreSinglePassLean,
-                block_mode == BlockExecutionMode::CoreSinglePassLean);
+                block_mode == BlockExecutionMode::CoreSinglePass || block_mode == BlockExecutionMode::CoreSinglePassLean || block_mode == BlockExecutionMode::CoreAnchor,
+                block_mode == BlockExecutionMode::CoreSinglePassLean || block_mode == BlockExecutionMode::CoreAnchor);
+        if (block_mode == BlockExecutionMode::CoreAnchor)
+            anchor_filter_=std::make_unique<AnchorFilter>(index,neighborhood_cache_bytes/8);
         stats_.timestamp_workspace_bytes = similarity_workspace_.bytes();
         if (fingerprint_index_ != nullptr) {
             if (fingerprint_index_->vertex_count() != index_.vertex_count()) {
@@ -565,6 +568,7 @@ public:
         result.stats.query_milliseconds = static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(end - begin)
                 .count());
+        if (anchor_filter_) result.stats.anchor=anchor_filter_->stats();
         result.stats.sparse_certificate_entries = certificates_.size();
         result.stats.sparse_certificate_table_bytes = certificates_.bytes();
         result.stats.neighborhood_cache_entries = neighborhood_cache_.size();
@@ -631,7 +635,8 @@ private:
             // vertex core and similar to its minimum-degree anchor, not a clique.
             const bool connectivity = block_mode_ == BlockExecutionMode::CoreConnectivity ||
                                       block_mode_ == BlockExecutionMode::CoreSinglePass ||
-                                      block_mode_ == BlockExecutionMode::CoreSinglePassLean;
+                                      block_mode_ == BlockExecutionMode::CoreSinglePassLean ||
+                                      block_mode_ == BlockExecutionMode::CoreAnchor;
             if (connectivity && posting.size() <= mu_) continue;
             std::uint64_t partner=0;
             if (connectivity) {
@@ -758,6 +763,14 @@ private:
             }
         }
         // Certified/cached decisions need no materialized active neighborhood.
+        // Rejection only: preserve the existing candidate enumeration, edge
+        // certificates, endpoint updates and all pSCAN core/role semantics.
+        if (anchor_filter_ && anchor_filter_->reject(left,right,
+                threshold_.required_common_neighbors(index_.degree(left),index_.degree(right)))) {
+            ++stats_.exact_dissimilar_certificates;
+            certificates_.insert(key,EdgeState::Dissimilar);
+            return EdgeState::Dissimilar;
+        }
         // Delay activation until a remaining predicate actually uses it.
         if (block_mode_ >= BlockExecutionMode::AdaptiveWitnessBounds && activated_vertex_ != left)
             activate_neighborhood(left);
@@ -1013,6 +1026,7 @@ private:
     const FactorIndex& index_;
     const SimilarityThreshold& threshold_;
     std::uint64_t mu_ = 0;
+    std::unique_ptr<AnchorFilter> anchor_filter_;
     std::vector<std::int64_t> similar_degree_;
     std::vector<std::int64_t> effective_degree_;
     DisjointSet components_;

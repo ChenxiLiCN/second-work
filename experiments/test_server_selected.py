@@ -47,6 +47,7 @@ class AdapterTests(unittest.TestCase):
             self.assertEqual(len(report['id_remappings']),1)
 
 class SelectedRunnerTests(unittest.TestCase):
+    anchor=False
     def exercise(self,fault=None):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)
@@ -58,7 +59,7 @@ class SelectedRunnerTests(unittest.TestCase):
             calls=[]
             def measured(prefix,command,limit):
                 exe=Path(command[0]).name;calls.append(exe)
-                if exe=='verify_adaptive_fli': return dict(status=0,all_passed='0' if fault=='oracle' else '1')
+                if exe in ('verify_adaptive_fli','verify_anchor_filter'): return dict(status=0,all_passed='0' if fault=='oracle' else '1')
                 if exe=='bri_build_measured':
                     Path(command[-1]).write_bytes(b'index')
                     return dict(status=0,offline_compute_ms='2000',hin_load_ms='999999')
@@ -67,19 +68,26 @@ class SelectedRunnerTests(unittest.TestCase):
                     (prefix.with_suffix('.log')).write_text('Total time without IO: 4000000\n')
                     (Path(command[1])/f'result-{command[2]}-5.txt').write_text('result')
                     return dict(status=0)
-                eps=command[-3];out=Path(command[-1]);latest=exe=='bri_query_core_lean'
+                eps=command[-3];out=Path(command[-1]);latest=exe==('bri_query_core_anchor' if self.anchor else 'bri_query_core_lean')
                 for kind in ('result','roles'):
                     (out/f'{kind}-{eps}-5.txt').write_text('wrong' if fault=='roles' and latest and kind=='roles' else kind)
                 if fault=='index' and latest: Path(command[1]).write_bytes(b'changed')
-                return dict(status=124 if fault=='timeout' and latest else 0,block_mode='11' if latest else '10',
+                metric=dict(status=124 if fault=='timeout' and latest else 0,block_mode=str((12 if latest else 11) if self.anchor else (11 if latest else 10)),
                     used_roundtrip_metadata='0',cache_budget_mib='32',single_pass='1',
-                    lean_workspaces=str(int(latest)),witness_counts_built='0',
+                    lean_workspaces=str(int(self.anchor or latest)),witness_counts_built='0',
                     on_demand_fli_build_ms='1000',query_call_ms='1500' if latest else '2000',
                     base_relation_load_ms='999999',output_write_ms='999999')
+                if self.anchor:
+                    metric.update(anchor_filter=str(int(latest)),anchor_calls='10' if latest else '0',
+                        anchor_no_anchor='1',anchor_ineligible='2',anchor_eligible='7',
+                        anchor_rejects='4',anchor_fallbacks='3',exact_similarity_checks='6' if latest else '10',
+                        anchor_mapping_bytes='40',anchor_state_bytes='32')
+                    if fault=='accounting' and latest: metric['anchor_eligible']='99'
+                return metric
             with patch.dict(os.environ,DATA_ROOT=str(root),RESULT_ROOT=str(root/'results')), \
                  patch.object(runner,'prepare',prepare),patch.object(runner,'measured',measured), \
                  patch.object(runner,'checked'),contextlib.redirect_stdout(io.StringIO()):
-                code=runner.main()
+                code=runner.main(anchor=self.anchor)
             run=next(p for p in (root/'results').iterdir() if p.is_dir())
             status=json.loads((run/'status.json').read_text())
             self.assertEqual(code,int(fault is not None))
@@ -92,6 +100,16 @@ class SelectedRunnerTests(unittest.TestCase):
                     self.assertEqual(float(row['hinscan_compute_s']),7)
                     self.assertEqual(float(row['offline_compute_s']),2)
                     self.assertEqual(float(row['online_compute_s']),2.5 if row['variant']=='latest' else 3)
+                    if self.anchor and row['variant']=='latest':
+                        self.assertEqual(float(row['online_saved_vs_control_s']),0.5)
+                        self.assertEqual(int(row['full_checks_avoided_vs_control']),4)
+                        self.assertEqual(int(row['anchor_extra_bytes']),72)
+            if fault=='index':
+                with (run/'summary.tsv').open(newline='') as f:
+                    for row in csv.DictReader(f,delimiter='\t'):
+                        self.assertEqual(row['valid'],'0')
+                        self.assertEqual(row['speedup_vs_hinscan'],'')
+                        self.assertEqual(row.get('online_saved_vs_control_s',''),'')
             with tarfile.open(str(run)+'.tar.gz') as archive:
                 self.assertFalse(any(n.endswith(('.bri','.txt','.bin')) for n in archive.getnames()))
     def test_success(self): self.exercise()

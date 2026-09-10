@@ -5,6 +5,7 @@
 #include "index/FingerprintNeighborhoodIndex.h"
 #include "index/BudgetedSimilarityIndex.h"
 #include "scan/ExactNeighborhoodCache.h"
+#include "scan/AnchorFilter.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -14,7 +15,7 @@
 namespace hinscan {
 
 // Experimental execution variants; the default remains the verified V11 path.
-enum class BlockExecutionMode { Disabled, SeedOnly, SkipCertified, WitnessBounds, AdaptiveWitnessBounds, WitnessBitmaps, WitnessExclusion, LazyNoWitness, LazyAlwaysExclusion, CoreConnectivity, CoreSinglePass, CoreSinglePassLean };
+enum class BlockExecutionMode { Disabled, SeedOnly, SkipCertified, WitnessBounds, AdaptiveWitnessBounds, WitnessBitmaps, WitnessExclusion, LazyNoWitness, LazyAlwaysExclusion, CoreConnectivity, CoreSinglePass, CoreSinglePassLean, CoreAnchor };
 
 enum class PscanVertexRole {
     Core,
@@ -68,6 +69,7 @@ struct PscanOnFliStats {
     std::uint64_t query_milliseconds = 0;
     double prune_ms = 0, core_ms = 0, noncore_ms = 0;
     ExactNeighborhoodCacheStats adaptive_cache;
+    AnchorFilterStats anchor;
     std::uint64_t adaptive_workspace_bytes = 0;
     double block_discovery_ms = 0;
     std::uint64_t certified_blocks = 0, block_core_vertices = 0;

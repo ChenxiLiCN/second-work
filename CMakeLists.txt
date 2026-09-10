@@ -51,6 +51,7 @@ else()
 endif()
 
 add_library(pscan_on_fli_core
+    src/scan/AnchorFilter.cpp
     src/scan/PscanOnFli.cpp
     src/scan/ExactNeighborhoodCache.cpp
     src/scan/RegionCompletion.cpp
@@ -69,7 +70,7 @@ add_executable(hin_materialize
 )
 
 # Diagnostic-only build. Release query targets do not compile the timers in.
-add_library(pscan_profile_core src/scan/PscanOnFli.cpp src/scan/ExactNeighborhoodCache.cpp)
+add_library(pscan_profile_core src/scan/PscanOnFli.cpp src/scan/ExactNeighborhoodCache.cpp src/scan/AnchorFilter.cpp)
 target_include_directories(pscan_profile_core PUBLIC src)
 target_link_libraries(pscan_profile_core PUBLIC fli_index)
 target_compile_definitions(pscan_profile_core PUBLIC HINSCAN_QUERY_PROFILE=1)
@@ -82,7 +83,7 @@ add_executable(bri_profile_v14 src/tools/bri_query_index.cpp)
 target_compile_definitions(bri_profile_v14 PRIVATE HINSCAN_BLOCK_MODE=6)
 target_link_libraries(bri_profile_v14 PRIVATE pscan_profile_core)
 set_target_properties(bri_profile_v14 PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-add_library(pscan_profile_control_core src/scan/PscanOnFli.cpp src/scan/ExactNeighborhoodCache.cpp)
+add_library(pscan_profile_control_core src/scan/PscanOnFli.cpp src/scan/ExactNeighborhoodCache.cpp src/scan/AnchorFilter.cpp)
 target_include_directories(pscan_profile_control_core PUBLIC src)
 target_link_libraries(pscan_profile_control_core PUBLIC fli_index)
 target_compile_definitions(pscan_profile_control_core PUBLIC HINSCAN_QUERY_PROFILE=2)
@@ -117,6 +118,13 @@ target_link_libraries(bri_query_core_connectivity PRIVATE pscan_on_fli_core)
 add_executable(bri_query_regions src/tools/bri_query_regions.cpp)
 add_executable(bri_query_core_single_pass src/tools/bri_query_index.cpp)
 add_executable(bri_query_core_lean src/tools/bri_query_index.cpp)
+add_executable(bri_query_core_anchor src/tools/bri_query_index.cpp)
+target_compile_definitions(bri_query_core_anchor PRIVATE HINSCAN_BLOCK_MODE=12)
+target_link_libraries(bri_query_core_anchor PRIVATE pscan_on_fli_core)
+set_target_properties(bri_query_core_anchor PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_executable(verify_anchor_filter src/tools/verify_anchor_filter.cpp)
+target_link_libraries(verify_anchor_filter PRIVATE pscan_on_fli_core)
+set_target_properties(verify_anchor_filter PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 target_compile_definitions(bri_query_core_lean PRIVATE HINSCAN_BLOCK_MODE=11)
 target_link_libraries(bri_query_core_lean PRIVATE pscan_on_fli_core)
 set_target_properties(bri_query_core_lean PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
