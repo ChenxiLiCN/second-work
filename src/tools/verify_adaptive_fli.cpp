@@ -1,6 +1,7 @@
 #include "hin/HinGraph.h"
 #include "index/FactorIndex.h"
 #include "scan/PscanOnFli.h"
+#include "scan/RegionCompletion.h"
 #include <algorithm>
 #include <fstream>
 #include <iostream>
@@ -98,8 +99,8 @@ int main(int argc, char** argv) {
         const SimilarityThreshold unit{huge,huge};
         require(unit.certifies_common(huge,huge,huge), "wide certificate equality");
         require(!unit.certifies_common(huge-1,huge,huge), "wide certificate rejection");
-        std::uint64_t new_core_cases=0;
-        for (unsigned fixture=0; fixture<16; ++fixture) {
+        std::uint64_t new_core_cases=0, region_cases=0, resolved_cases=0, fallback_cases=0;
+        for (unsigned fixture=0; fixture<18; ++fixture) {
             const unsigned n = fixture==0 ? 0 : fixture==1 ? 1 : fixture==2 ? 7 : fixture==3 ? 65 : 257;
             const unsigned m = fixture<4 ? 5 : fixture==4 ? 257 : fixture==15 ? 80 : 23;
             std::vector<std::pair<unsigned,unsigned>> edges;
@@ -114,6 +115,13 @@ int main(int argc, char** argv) {
                 if (fixture==11) present = u<4 && v<4; // Duplicate witnesses cannot add density.
                 if (fixture==12) present = v<3 && u>=5*v && u<=5*v+5; // Overlapping blocks.
                 if (fixture==13) present = (v==0 && u<65) || (v==1 && u>0 && u<=65); // Sparse witness words.
+                // All vertices core, but two proven cliques joined by a dissimilar edge.
+                if (fixture==16) present=(v==0 && u<6) || (v==1 && u>=6 && u<12)
+                    || (v==2 && (u==5 || u==6));
+                // Noncontiguous completed clique IDs interspersed with a residual component.
+                if (fixture==17) present=(v==0 && u<18 && u%3==0)
+                    || (v==1 && u<18 && u%3==1) || (v==2 && u<18 && u%3==2)
+                    || (v==3 && (u==1 || u==2));
                 if (fixture==14 || fixture==15) {
                     present = v==0 && u<6;
                     unsigned next_vertex=6, next_witness=1;
@@ -158,6 +166,8 @@ int main(int argc, char** argv) {
                 const auto path = parse_meta_path(graph, specification);
                 const auto factor = FactorIndex::build(graph, path);
                 const auto prepared_factor = FactorIndex::build(enhanced,path);
+                const auto relations = FactorIndex::build(graph,path,false);
+                require(relations.stats().degree_merge_entries_read==0, "relation view expanded degrees");
                 const auto expected = oracle_neighborhoods(graph,path);
                 for (VertexId v=0; v<n; ++v) {
                     require(factor.degree(v)==expected[v].size(), "degree builder mismatch");
@@ -207,17 +217,34 @@ int main(int argc, char** argv) {
                         const auto fresh=run_pscan_on_fli(factor,eps,mu,budget,nullptr,nullptr,true,BlockExecutionMode::CoreConnectivity);
                         compare(fresh,reference);
                         compare(run_pscan_on_fli(prepared_factor,eps,mu,budget,nullptr,nullptr,true,BlockExecutionMode::CoreConnectivity),reference);
+                        const auto regional=run_region_completion(relations,eps,mu,budget);
+                        compare(regional.clustering,reference);
+                        ++region_cases;
+                        resolved_cases+=regional.regions.completed_core_vertices>0;
+                        fallback_cases+=regional.regions.residual_vertices>0;
+                        require(regional.regions.completed_core_vertices
+                            +regional.regions.completed_noncore_vertices
+                            +regional.regions.residual_vertices==factor.vertex_count(), "region partition");
+                        require(regional.regions.avoided_degree_merge_entries
+                            +regional.regions.residual_degree_merge_entries
+                            ==factor.stats().degree_merge_entries_read, "degree work accounting");
+                        if ((fixture==16 || fixture==17) && std::string(specification)=="A-B-A"
+                            && eps.numerator==1 && eps.denominator==2 && mu==5)
+                            require(regional.regions.residual_vertices==12, "merged unproven bridge");
                         const auto old=run_pscan_on_fli(factor,eps,mu,budget,nullptr,nullptr,true,BlockExecutionMode::WitnessExclusion);
                         require(fresh.stats.block_core_vertices>=old.stats.block_core_vertices,
                                 "connectivity certificate lost old cores");
                         if (fresh.stats.block_core_vertices>old.stats.block_core_vertices) ++new_core_cases;
-                        cluster_cases += 13;
+                        cluster_cases += 14;
                     }
                 }
                 std::cout << "fixture=" << fixture << " path=" << specification << " passed\n";
             }
         }
         require(new_core_cases>0, "stronger certificate never exercised");
+        require(resolved_cases>0 && fallback_cases>0, "missing region branch coverage");
+        std::cout << "region_cases=" << region_cases << "\nregion_resolved_cases=" << resolved_cases
+                  << "\nregion_fallback_cases=" << fallback_cases << '\n';
         std::cout << "stronger_core_cases=" << new_core_cases << '\n';
         require(evictions>0 && bitmap_checks>0 && list_checks>0, "missing cache branch coverage");
         require(streaming_checks>0 && pair_bound_hits>0 && equal_factor_checks>0,

@@ -233,7 +233,8 @@ bool SimilarityThreshold::fails_degree_ratio(std::uint64_t left_degree,
 }
 
 FactorIndex FactorIndex::build(const HinGraph& graph,
-                               const std::vector<std::uint32_t>& meta_path) {
+                               const std::vector<std::uint32_t>& meta_path,
+                               bool prepare_exact_rows) {
     if (meta_path.size() < 3 || meta_path.size() % 2 == 0) {
         throw std::invalid_argument(
             "factor index requires an odd-length symmetric type sequence");
@@ -249,7 +250,19 @@ FactorIndex FactorIndex::build(const HinGraph& graph,
     if (meta_path.size() == 3) {
         const auto t = graph.transition(meta_path[0], meta_path[1]);
         const auto& r = *t.relation;
-        if (r.roundtrip_ready && r.source_type != r.target_type) {
+        if (!prepare_exact_rows && r.source_type != r.target_type) {
+            index.witnesses_ = t.use_reverse ? r.reverse : r.forward;
+            index.postings_ = t.use_reverse ? r.forward : r.reverse;
+            auto& st = index.stats_;
+            st.target_vertices = index.witnesses_.size();
+            st.center_vertices = index.postings_.size();
+            st.half_path_incidences = r.loaded_edge_count;
+            st.half_expansion_ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - begin).count();
+            st.build_milliseconds = static_cast<std::uint64_t>(st.half_expansion_ms);
+            return index;
+        }
+        if (prepare_exact_rows && r.roundtrip_ready && r.source_type != r.target_type) {
             // First implementation owns query arrays; no expansion, union-count,
             // or posting sort is repeated. Copy time is included online.
             index.witnesses_ = t.use_reverse ? r.reverse : r.forward;
@@ -258,6 +271,7 @@ FactorIndex FactorIndex::build(const HinGraph& graph,
             index.degree_ordered_postings_ = t.use_reverse ? r.target_ordered_postings : r.source_ordered_postings;
             auto& st = index.stats_;
             st.used_roundtrip_metadata = true;
+            index.exact_ready_ = true;
             st.target_vertices = index.witnesses_.size();
             st.center_vertices = index.postings_.size();
             st.half_path_incidences = r.loaded_edge_count;
@@ -333,6 +347,22 @@ FactorIndex FactorIndex::build(const HinGraph& graph,
 
     const auto half_end = std::chrono::steady_clock::now();
 
+    index.stats_.target_vertices = target_count;
+    index.stats_.center_vertices = center_count;
+    index.stats_.half_expansion_ms = std::chrono::duration<double, std::milli>(half_end - begin).count();
+    if (prepare_exact_rows) index.prepare_exact();
+    index.stats_.build_milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - begin).count();
+    return index;
+}
+
+void FactorIndex::prepare_exact() {
+    if (exact_ready_) return;
+    auto& index = *this;
+    const auto target_count = witnesses_.size();
+    const auto center_count = postings_.size();
+    const auto begin = std::chrono::steady_clock::now();
+    const auto half_end = begin;
     index.degrees_.resize(target_count);
     std::uint64_t closed_degree_sum = 0;
     std::vector<std::uint32_t> degree_seen(target_count, 0);
@@ -378,16 +408,45 @@ FactorIndex FactorIndex::build(const HinGraph& graph,
         3 * index.stats_.half_path_incidences * sizeof(VertexId) +
         (target_count + center_count + 2) * sizeof(std::uint64_t) +
         target_count * sizeof(std::uint64_t);
+    index.exact_ready_ = true;
     const auto end = std::chrono::steady_clock::now();
-    index.stats_.half_expansion_ms = std::chrono::duration<double, std::milli>(half_end - begin).count();
     index.stats_.degree_compute_ms = std::chrono::duration<double, std::milli>(degree_end - half_end).count();
     index.stats_.posting_order_ms = std::chrono::duration<double, std::milli>(end - degree_end).count();
     index.stats_.build_milliseconds = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count());
-    return index;
+}
+
+FactorIndex FactorIndex::restrict_to_components(const std::vector<bool>& keep) const {
+    if (keep.size() != witnesses_.size()) throw std::invalid_argument("invalid region mask");
+    FactorIndex result;
+    const auto missing = std::numeric_limits<VertexId>::max();
+    std::vector<VertexId> vertex_map(keep.size(), missing);
+    for (std::size_t v=0; v<keep.size(); ++v) if (keep[v]) {
+        vertex_map[v] = static_cast<VertexId>(result.witnesses_.size());
+        result.witnesses_.emplace_back();
+    }
+    for (const auto& row : postings_) {
+        bool retained=false, removed=false;
+        for (auto v : row) { retained |= keep[v]; removed |= !keep[v]; }
+        if (retained && removed) throw std::logic_error("region mask cuts a witness posting");
+        if (!retained) continue;
+        const auto w = static_cast<VertexId>(result.postings_.size());
+        result.postings_.emplace_back();
+        auto& target = result.postings_.back();
+        target.reserve(row.size());
+        for (auto v : row) {
+            target.push_back(vertex_map[v]);
+            result.witnesses_[vertex_map[v]].push_back(w);
+        }
+        result.stats_.half_path_incidences += row.size();
+    }
+    result.stats_.target_vertices = result.witnesses_.size();
+    result.stats_.center_vertices = result.postings_.size();
+    return result;
 }
 
 void FactorIndex::save(const std::filesystem::path& index_file) const {
+    if (!exact_ready_) throw std::logic_error("cannot persist a query-only relation view");
     if (index_file.has_parent_path()) {
         std::filesystem::create_directories(index_file.parent_path());
     }
@@ -447,6 +506,7 @@ FactorIndex FactorIndex::load(const std::filesystem::path& index_file) {
     const auto center_count = read_value<std::uint64_t>(input, "center count");
     index.stats_.half_path_incidences =
         read_value<std::uint64_t>(input, "half-path incidence count");
+    index.exact_ready_ = true;
     index.stats_.exact_projected_edges =
         read_value<std::uint64_t>(input, "projected edge count");
     index.stats_.degree_merge_entries_read =

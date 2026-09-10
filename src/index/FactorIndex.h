@@ -76,7 +76,11 @@ struct SimilarityCheck {
 class FactorIndex {
 public:
     static FactorIndex build(const HinGraph& graph,
-                             const std::vector<std::uint32_t>& meta_path);
+                             const std::vector<std::uint32_t>& meta_path,
+                             bool prepare_exact_rows = true);
+    // Query-only relation view: no projected degrees or graph are materialized.
+    void prepare_exact();
+    FactorIndex restrict_to_components(const std::vector<bool>& keep) const;
     static FactorIndex load(const std::filesystem::path& index_file);
 
     void save(const std::filesystem::path& index_file) const;
@@ -107,6 +111,7 @@ private:
     std::vector<std::vector<VertexId>> degree_ordered_postings_;
     std::vector<std::uint64_t> degrees_;
     FactorIndexStats stats_;
+    bool exact_ready_ = false;
 };
 
 }  // namespace hinscan

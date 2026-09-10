@@ -53,6 +53,7 @@ endif()
 add_library(pscan_on_fli_core
     src/scan/PscanOnFli.cpp
     src/scan/ExactNeighborhoodCache.cpp
+    src/scan/RegionCompletion.cpp
 )
 target_include_directories(pscan_on_fli_core PUBLIC src)
 target_link_libraries(pscan_on_fli_core PUBLIC fli_index)
@@ -109,6 +110,9 @@ target_link_libraries(bri_build_core_index PRIVATE hin_io)
 add_executable(bri_query_core_connectivity src/tools/bri_query_index.cpp)
 target_compile_definitions(bri_query_core_connectivity PRIVATE HINSCAN_BLOCK_MODE=9)
 target_link_libraries(bri_query_core_connectivity PRIVATE pscan_on_fli_core)
+add_executable(bri_query_regions src/tools/bri_query_regions.cpp)
+target_link_libraries(bri_query_regions PRIVATE pscan_on_fli_core)
+set_target_properties(bri_query_regions PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 foreach(group IN ITEMS 1 2)
     add_executable(bri_profile_core_p${group} src/tools/bri_query_index.cpp)
     target_compile_definitions(bri_profile_core_p${group} PRIVATE HINSCAN_BLOCK_MODE=9)
