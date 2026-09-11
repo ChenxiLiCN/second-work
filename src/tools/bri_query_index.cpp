@@ -44,6 +44,11 @@ int main(int argc, char** argv) {
         const auto saved = Clock::now();
         const auto& f = factor.stats();
         const auto& q = result.stats;
+#ifdef HINSCAN_SHARED_GROUPS
+        if (!q.shared_groups) throw std::logic_error("missing shared group diagnostic");
+        hinscan::write_shared_group_report(*q.shared_groups,argv[5]);
+        std::cout<<"shared_group_diagnostic=1\n";
+#endif
 #ifdef HINSCAN_HOTSPOTS
         if (!q.adaptive_cache.hotspots) throw std::logic_error("missing diagnostic trace");
         const auto report_start=Clock::now();

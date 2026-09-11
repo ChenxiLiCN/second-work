@@ -18,7 +18,7 @@ std::runtime_error data_error(const std::filesystem::path& file,
     return std::runtime_error(file.string() + ": " + message);
 }
 
-template <typename T>
+template <typename T>   
 void write_binary(std::ofstream& output, const T& value) {
     output.write(reinterpret_cast<const char*>(&value), sizeof(T));
     if (!output) {

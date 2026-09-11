@@ -127,6 +127,23 @@ target_compile_definitions(verify_resumable_cache PRIVATE HINSCAN_VERIFY_RESUMAB
 target_link_libraries(verify_resumable_cache PRIVATE pscan_on_fli_core)
 set_target_properties(bri_query_core_resumable verify_resumable_cache PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_library(pscan_shared_group_core src/scan/PscanOnFli.cpp src/scan/ExactNeighborhoodCache.cpp
+    src/scan/AnchorFilter.cpp src/scan/SharedGroupDiagnostics.cpp)
+target_include_directories(pscan_shared_group_core PUBLIC src)
+target_link_libraries(pscan_shared_group_core PUBLIC fli_index)
+target_compile_definitions(pscan_shared_group_core PUBLIC HINSCAN_SHARED_GROUPS=1)
+if(MSVC)
+    target_compile_options(pscan_shared_group_core PRIVATE /O2 /W4)
+else()
+    target_compile_options(pscan_shared_group_core PRIVATE -O3 -Wall -Wextra -Wpedantic)
+endif()
+add_executable(bri_diagnose_shared_groups src/tools/bri_query_index.cpp)
+target_compile_definitions(bri_diagnose_shared_groups PRIVATE HINSCAN_BLOCK_MODE=11)
+target_link_libraries(bri_diagnose_shared_groups PRIVATE pscan_shared_group_core)
+add_executable(verify_shared_groups src/tools/verify_anchor_filter.cpp)
+target_link_libraries(verify_shared_groups PRIVATE pscan_shared_group_core)
+set_target_properties(bri_diagnose_shared_groups verify_shared_groups PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_library(pscan_hotspot_core src/scan/PscanOnFli.cpp src/scan/ExactNeighborhoodCache.cpp
     src/scan/AnchorFilter.cpp src/scan/HotspotDiagnostics.cpp)
 target_include_directories(pscan_hotspot_core PUBLIC src)

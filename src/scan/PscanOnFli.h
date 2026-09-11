@@ -6,6 +6,7 @@
 #include "index/BudgetedSimilarityIndex.h"
 #include "scan/ExactNeighborhoodCache.h"
 #include "scan/AnchorFilter.h"
+#include "scan/SharedGroupDiagnostics.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -27,6 +28,8 @@ enum class PscanVertexRole {
 const char* pscan_role_name(PscanVertexRole role) noexcept;
 
 struct PscanOnFliStats {
+    // Allocated only by the isolated, hindsight shared-group diagnostic build.
+    std::shared_ptr<SharedGroupStats> shared_groups;
     std::uint64_t projected_edges_seen_in_prune = 0;
     std::uint64_t degree_pruned_edges = 0;
     std::uint64_t automatically_similar_edges = 0;

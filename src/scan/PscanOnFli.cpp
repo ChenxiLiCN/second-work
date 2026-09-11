@@ -521,6 +521,10 @@ public:
         if (block_mode == BlockExecutionMode::CoreAnchor)
             anchor_filter_=std::make_unique<AnchorFilter>(index,neighborhood_cache_bytes/8);
         stats_.timestamp_workspace_bytes = similarity_workspace_.bytes();
+#ifdef HINSCAN_SHARED_GROUPS
+        if (adaptive_neighborhoods && block_mode==BlockExecutionMode::CoreSinglePassLean)
+            shared_groups_=std::make_unique<SharedGroupDiagnostics>(index);
+#endif
         if (fingerprint_index_ != nullptr) {
             if (fingerprint_index_->vertex_count() != index_.vertex_count()) {
                 throw std::invalid_argument(
@@ -559,6 +563,12 @@ public:
         profile::set_phase(profile::Phase::Noncore);
         auto result = cluster_noncore_vertices();
         result.stats = stats_;
+#ifdef HINSCAN_SHARED_GROUPS
+        if (shared_groups_) {
+            shared_groups_->finish();
+            result.stats.shared_groups=std::make_shared<SharedGroupStats>(shared_groups_->stats());
+        }
+#endif
         const auto end = std::chrono::steady_clock::now();
         result.stats.prune_ms = std::chrono::duration<double, std::milli>(pruned - begin).count();
         result.stats.core_ms = std::chrono::duration<double, std::milli>(cores - pruned).count();
@@ -777,11 +787,28 @@ private:
         // Delay activation until a remaining predicate actually uses it.
         if (block_mode_ >= BlockExecutionMode::AdaptiveWitnessBounds && activated_vertex_ != left)
             activate_neighborhood(left);
+#ifdef HINSCAN_SHARED_GROUPS
+        const auto shared_started=std::chrono::steady_clock::now();
+        const auto shared_entries=adaptive_cache_?
+            adaptive_cache_->stats().posting_entries+adaptive_cache_->stats().streaming_posting_entries:0;
+        const auto shared_units=adaptive_cache_?adaptive_cache_->stats().intersection_units:0;
+#endif
         const auto similar = adaptive_cache_
             ? adaptive_cache_->check(right, threshold_.required_common_neighbors(
                                               index_.degree(left), index_.degree(right)))
             : similarity_workspace_.check(left, right, neighborhood_cache_.get(right), &stats_);
         ++stats_.exact_similarity_checks;
+#ifdef HINSCAN_SHARED_GROUPS
+        const auto predicate_ms=std::chrono::duration<double,std::milli>(
+            std::chrono::steady_clock::now()-shared_started).count();
+        if (shared_groups_) {
+            const auto& s=adaptive_cache_->stats();
+            shared_groups_->observe(left,right,
+                threshold_.required_common_neighbors(index_.degree(left),index_.degree(right)),
+                similar,predicate_ms,s.posting_entries+s.streaming_posting_entries-shared_entries,
+                s.intersection_units-shared_units);
+        }
+#endif
         const auto result = similar ? EdgeState::Similar : EdgeState::Dissimilar;
         certificates_.insert(key, result);
         if (result == EdgeState::Similar) {
@@ -1041,6 +1068,9 @@ private:
     const FingerprintNeighborhoodIndex* fingerprint_index_ = nullptr;
     const BudgetedSimilarityIndex* budgeted_index_ = nullptr;
     std::unique_ptr<ExactNeighborhoodCache> adaptive_cache_;
+#ifdef HINSCAN_SHARED_GROUPS
+    std::unique_ptr<SharedGroupDiagnostics> shared_groups_;
+#endif
     BlockExecutionMode block_mode_;
     VertexId activated_vertex_ = std::numeric_limits<VertexId>::max();
     std::vector<VertexId> seed_components_;

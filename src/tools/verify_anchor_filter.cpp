@@ -69,6 +69,36 @@ void compare(const PscanOnFliResult& a,const PscanOnFliResult& b) {
     require(a.noncore_clusters==b.noncore_clusters,"noncore memberships mismatch");
     require(a.roles==b.roles,"roles mismatch");
 }
+#ifdef HINSCAN_SHARED_GROUPS
+std::uint64_t shared_calls=0,shared_positive=0,shared_negative=0,shared_impossible=0,shared_entries=0;
+void verify_shared(const FactorIndex& f,const std::vector<std::vector<VertexId>>& rows) {
+    const bool exhaustive=rows.size()<=40;
+    const auto rounds=exhaustive?rows.size()+2:std::size_t{3};
+    for (std::size_t round=0;round<rounds;++round) {
+        SharedGroupDiagnostics diagnostic(f);
+        const char* eps[]={"0.1","0.5","0.9"};
+        const auto threshold=SimilarityThreshold::parse(eps[round%3]);
+        std::uint64_t calls=0;
+        for (VertexId u=0;u<rows.size();++u) {
+            for (auto it=rows[u].rbegin();it!=rows[u].rend();++it) if (*it!=u) {
+                const auto v=*it;
+                const auto k=exhaustive?round:
+                    threshold.required_common_neighbors(rows[u].size(),rows[v].size());
+                diagnostic.observe(u,v,k,common(rows[u],rows[v])>=k,0.001,1,1);
+                ++calls;
+            }
+            diagnostic.finish();
+        }
+        const auto& s=diagnostic.stats();
+        require(s.calls==calls && s.covered+s.uncovered==calls,"shared direct call accounting");
+        require(s.covered==s.positive+s.negative && s.mismatches==0,"shared direct decision accounting");
+        require(s.covered_posting_entries==s.covered && s.covered_intersection_units==s.covered,
+                "shared work credited more than once");
+        shared_calls+=calls; shared_positive+=s.positive; shared_negative+=s.negative;
+        shared_impossible+=s.impossible_groups; shared_entries+=s.proof_posting_entries;
+    }
+}
+#endif
 #ifdef HINSCAN_VERIFY_RESUMABLE
 std::uint64_t saved_rows=0,partial_hits=0,promotions=0,left_completions=0,partial_evictions=0,partial_drops=0;
 std::uint64_t verify_resume(const FactorIndex& f,const std::vector<std::vector<VertexId>>& rows,
@@ -136,13 +166,15 @@ int main(int argc,char** argv) {
         std::mt19937 random(20260910);
         std::uint64_t predicates=0,clusters=0,rejects=0,resumed=0,replacements=0,cached=0;
         std::uint64_t integrated_rejects=0;
-#ifdef HINSCAN_VERIFY_RESUMABLE
+#if defined(HINSCAN_SHARED_GROUPS)
+        const unsigned fixtures=16;
+#elif defined(HINSCAN_VERIFY_RESUMABLE)
         const unsigned fixtures=15;
 #else
         const unsigned fixtures=14;
 #endif
         for (unsigned fixture=0;fixture<fixtures;++fixture) {
-            const unsigned n=fixture==0?0:fixture==1?1:fixture==2?12:fixture==14?257:31;
+            const unsigned n=fixture==0?0:fixture==1?1:fixture==2?12:fixture==14?257:fixture==15?40:31;
             const unsigned m=fixture==2?3:9;
             std::vector<std::pair<unsigned,unsigned>> edges;
             for (unsigned u=0;u<n;++u) for (unsigned w=0;w<m;++w) {
@@ -154,6 +186,8 @@ int main(int argc,char** argv) {
                 if (fixture>=5) present=random()%100<(fixture-4)*7;
                 if (fixture==14) present=(w==0 && u<30)||(w==1 && u>=20 && u<40)||
                     (w==2 && u>=128 && u<155)||(w==3 && (u<5||u>=250));
+                if (fixture==15) present=(w==0 && u<20)||(w==1 && (u==20||u<5))||
+                    (w==2 && u>=20 && u<36)||(w==3 && u>=4 && u<10);
                 if (present) { edges.emplace_back(u,w); if (u%7==0) edges.emplace_back(u,w); }
             }
             const auto dir=root/std::to_string(fixture);
@@ -169,9 +203,12 @@ int main(int argc,char** argv) {
                 const auto path=parse_meta_path(graph,text);
                 const auto f=FactorIndex::build(graph,path);
                 const auto rows=closed_rows(graph,path);
+#ifdef HINSCAN_SHARED_GROUPS
+                verify_shared(f,rows);
+#endif
 #ifdef HINSCAN_VERIFY_RESUMABLE
                 predicates+=verify_resume(f,rows,random);
-#else
+#elif !defined(HINSCAN_SHARED_GROUPS)
                 for (auto budget:{0ULL,32ULL,4096ULL}) {
                     AnchorFilter filter(f,budget);
                     std::vector<std::uint64_t> thresholds;
@@ -205,6 +242,12 @@ int main(int argc,char** argv) {
                         const auto trial=run_pscan_on_fli(f,threshold,mu,bytes,nullptr,nullptr,true,BlockExecutionMode::CoreAnchor);
 #endif
                         compare(control,truth); compare(trial,truth);
+#ifdef HINSCAN_SHARED_GROUPS
+                        const auto& s=*control.stats.shared_groups;
+                        require(s.calls==control.stats.exact_similarity_checks,"shared integrated calls");
+                        require(s.covered+s.uncovered==s.calls && s.mismatches==0,"shared integrated accounting");
+                        require(s.covered==s.positive+s.negative,"shared integrated decisions");
+#endif
 #ifdef HINSCAN_HOTSPOTS
                         for (const auto* result:{&control,&trial}) {
                             const auto& stats=result->stats.adaptive_cache;
@@ -239,8 +282,15 @@ int main(int argc,char** argv) {
         std::cout<<"partial_saves="<<saved_rows<<"\npartial_hits="<<partial_hits
                  <<"\npromotions="<<promotions<<"\nleft_completions="<<left_completions
                  <<"\npartial_evictions="<<partial_evictions<<"\npartial_drops="<<partial_drops<<'\n';
-#else
+#elif !defined(HINSCAN_SHARED_GROUPS)
         require(rejects && resumed && replacements && cached && integrated_rejects,"unexercised anchor branch");
+#endif
+#ifdef HINSCAN_SHARED_GROUPS
+        require(shared_calls && shared_positive && shared_negative && shared_impossible && shared_entries,
+                "unexercised shared diagnostic branch");
+        std::cout<<"shared_direct_calls="<<shared_calls<<"\nshared_positive="<<shared_positive
+                 <<"\nshared_negative="<<shared_negative<<"\nshared_impossible="<<shared_impossible
+                 <<"\nshared_entries="<<shared_entries<<'\n';
 #endif
         std::cout<<"predicate_cases="<<predicates<<"\ncluster_cases="<<clusters
                  <<"\nanchor_rejects="<<rejects<<"\nresumed="<<resumed
