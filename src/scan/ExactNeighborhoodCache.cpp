@@ -67,12 +67,15 @@ ExactNeighborhoodCache::ExactNeighborhoodCache(const FactorIndex& index,
                                                std::uint64_t byte_budget,
                                                bool witness_bounds, bool pressure_only,
                                                bool witness_bitmaps, bool witness_exclusion,
-                                               bool single_pass, bool lean_workspaces)
+                                               bool single_pass, bool lean_workspaces, bool resumable)
     : index_(index), budget_(byte_budget), rows_(index.vertex_count()),
       previous_(index.vertex_count(), missing), next_(index.vertex_count(), missing),
       scratch_((index.vertex_count() + 63) / 64, 0), active_(scratch_.size(), 0) {
     const auto start = std::chrono::steady_clock::now();
     single_pass_ = single_pass;
+    resumable_=resumable;
+    if (resumable_ && (!single_pass || !lean_workspaces))
+        throw std::invalid_argument("resumable cache requires single-pass lean execution");
 #ifdef HINSCAN_HOTSPOTS
     stats_.hotspots=std::make_shared<HotspotTrace>(index.vertex_count());
 #endif
@@ -190,19 +193,21 @@ ExactNeighborhoodCache::generate(VertexId vertex) {
 }
 
 std::unique_ptr<ExactNeighborhoodCache::Row>
-ExactNeighborhoodCache::encode_scratch(VertexId vertex) {
+ExactNeighborhoodCache::encode_scratch(VertexId vertex,std::uint64_t known,const ResumeCursor* cursor) {
     auto row = std::make_unique<Row>();
-    row->degree = index_.degree(vertex);
+    row->degree = known==~std::uint64_t{0}?index_.degree(vertex):known;
+    const std::size_t suffix=cursor?3:0;
     const auto list_bytes = row->degree * sizeof(VertexId);
     const auto sparse_bytes = touched_.size() * (sizeof(VertexId) + sizeof(std::uint64_t));
     const auto dense_bytes = scratch_.size() * sizeof(std::uint64_t);
     if (dense_bytes < list_bytes && dense_bytes <= sparse_bytes) {
         row->kind = Kind::DenseBitmap;
+        if (cursor) row->words.reserve(scratch_.size()+suffix);
         row->words = scratch_;
     } else if (sparse_bytes < list_bytes) {
         row->kind = Kind::SparseBitmap;
         row->ids.assign(touched_.begin(), touched_.end());
-        row->words.reserve(touched_.size());
+        row->words.reserve(touched_.size()+suffix);
         for (const auto word : touched_) row->words.push_back(scratch_[word]);
     } else {
         row->ids.reserve(static_cast<std::size_t>(row->degree));
@@ -216,11 +221,143 @@ ExactNeighborhoodCache::encode_scratch(VertexId vertex) {
         if (row->ids.size() != row->degree)
             throw std::logic_error("cached neighborhood disagrees with FLI degree");
     }
+    if (cursor) {
+        if (row->kind==Kind::List) row->words.reserve(suffix);
+        row->words.push_back(cursor->witness);
+        row->words.push_back(cursor->offset);
+        row->words.push_back(cursor->scanned);
+    }
     return row;
+}
+
+ExactNeighborhoodCache::ResumeResult ExactNeighborhoodCache::resume(
+    VertexId vertex,std::uint64_t required,bool complete_required) {
+    const auto start=std::chrono::steady_clock::now();
+    const auto degree=index_.degree(vertex);
+    const auto left_degree=complete_required?0:index_.degree(active_vertex_);
+    const bool reused=is_partial(vertex);
+    ResumeCursor cursor;
+    std::uint64_t seen=0,found=0,scanned=0;
+    for (const auto word:touched_) scratch_[word]=0;
+    touched_.clear();
+    auto visit=[&](VertexId v) {
+        const auto word=v>>6U;
+        const auto bit=std::uint64_t{1}<<(v&63U);
+        if (scratch_[word]&bit) return false;
+        if (!scratch_[word]) touched_.push_back(word);
+        scratch_[word]|=bit;
+        ++seen;
+        if (!complete_required) found+=(active_[word]&bit)!=0;
+        return true;
+    };
+    if (reused) {
+        ++stats_.hits; ++stats_.resume_hits;
+        const auto& row=*rows_[vertex];
+        const auto size=row.words.size();
+        if (size<3) throw std::logic_error("partial cursor missing");
+        cursor={row.words[size-3],row.words[size-2],row.words[size-1]};
+        stats_.resume_skipped_prefix_entries+=cursor.scanned;
+        // Only the set and expansion position persist. Intersection counts
+        // always belong to the CURRENT left row, never the previous pair.
+        if (row.kind==Kind::List) {
+            for (const auto id:row.ids) visit(id);
+            stats_.resume_replay_units+=row.ids.size();
+        } else {
+            seen=row.degree;
+            const auto count=row.kind==Kind::DenseBitmap?scratch_.size():row.ids.size();
+            for (std::size_t i=0;i<count;++i) {
+                const auto word=row.kind==Kind::DenseBitmap?static_cast<VertexId>(i):row.ids[i];
+                const auto bits=row.words[i];
+                if (bits) { scratch_[word]=bits; touched_.push_back(word); }
+            }
+            if (!complete_required) {
+                static const auto count_bits=bitmap_counter();
+                found=count_bits(active_.data(),row.words.data(),
+                    row.kind==Kind::DenseBitmap?nullptr:row.ids.data(),count);
+            }
+            stats_.resume_replay_units+=count;
+        }
+        unlink(vertex);
+        bytes_-=row.bytes();
+        rows_[vertex].reset();
+    } else {
+        ++stats_.misses; ++stats_.resume_new_rows;
+        visit(vertex);
+    }
+    stats_.resume_replay_ms+=std::chrono::duration<double,std::milli>(
+        std::chrono::steady_clock::now()-start).count();
+    if (!complete_required) { ++stats_.resume_checks; ++stats_.streaming_checks; }
+    auto upper=[&]() { return std::min(left_degree,found+degree-seen); };
+    auto decided=[&]() {
+        if (complete_required) return seen==degree;
+        ++stats_.streaming_bound_evaluations;
+        return seen==degree || found>=required || upper()<required;
+    };
+    bool done=decided();
+    const auto& witnesses=index_.witnesses(vertex);
+    while (!done && cursor.witness<witnesses.size()) {
+        const auto& posting=index_.posting(witnesses[cursor.witness]);
+        while (!done && cursor.offset<posting.size()) {
+            // Advance BEFORE a possible early stop: the cursor is next-unread.
+            const auto v=posting[cursor.offset++];
+            ++scanned; ++cursor.scanned;
+            if (visit(v)) done=decided();
+            else if (!complete_required) ++stats_.streaming_duplicate_visits;
+        }
+        if (cursor.offset==posting.size()) { ++cursor.witness; cursor.offset=0; }
+    }
+    if (!done && seen!=degree) throw std::logic_error("resume exhausted before exact degree");
+    const bool complete=seen==degree;
+    if (complete_required && !complete) throw std::logic_error("partial left neighborhood");
+    const bool answer=found>=required;
+    const auto save_start=std::chrono::steady_clock::now();
+    auto row=encode_scratch(vertex,seen,complete?nullptr:&cursor);
+    if (complete) {
+        if (reused) ++stats_.resume_promotions;
+        admit(vertex,std::move(row));
+    } else if (row->bytes()<=budget_) {
+        admit(vertex,std::move(row));
+        ++stats_.resume_partial_saves;
+    } else {
+        ++stats_.resume_partial_drops;
+    }
+    stats_.resume_save_ms+=std::chrono::duration<double,std::milli>(
+        std::chrono::steady_clock::now()-save_start).count();
+    stats_.resume_new_entries+=scanned;
+    const auto elapsed=std::chrono::duration<double,std::milli>(
+        std::chrono::steady_clock::now()-start).count();
+    if (complete_required) {
+        stats_.posting_entries+=scanned; stats_.generation_ms+=elapsed;
+#ifdef HINSCAN_HOTSPOTS
+        auto& work=stats_.hotspots->rows[vertex];
+        ++work.generation_calls; work.generation_entries+=scanned; work.generation_ms+=elapsed;
+#endif
+    } else {
+        stats_.streaming_posting_entries+=scanned; stats_.streaming_ms+=elapsed;
+        if (complete) ++stats_.single_pass_complete;
+        else {
+            ++stats_.single_pass_partial;
+            if (answer) ++stats_.single_pass_early_accepts;
+            else ++stats_.single_pass_early_rejects;
+        }
+#ifdef HINSCAN_HOTSPOTS
+        auto& work=stats_.hotspots->rows[vertex];
+        ++work.stream_calls; work.stream_entries+=scanned;
+        work.partial_calls+=!complete; work.stream_ms+=elapsed;
+#endif
+    }
+    return {answer,found,complete?found:upper()};
 }
 
 const ExactNeighborhoodCache::Row& ExactNeighborhoodCache::get(VertexId v) {
     v = canonical_[v];
+    if (resumable_ && is_partial(v)) {
+        ++stats_.resume_left_completions;
+        resume(v,0,true);
+        const auto& row=rows_[v]?*rows_[v]:*transient_;
+        if (row.degree!=index_.degree(v)) throw std::logic_error("activation received partial row");
+        return row;
+    }
     if (rows_[v]) {
         ++stats_.hits;
         touch(v);
@@ -239,6 +376,7 @@ const ExactNeighborhoodCache::Row& ExactNeighborhoodCache::admit(
     }
     while (tail_ != missing && bytes_ + size > budget_) {
         const auto victim = tail_;
+        if (resumable_ && is_partial(victim)) ++stats_.resume_partial_evictions;
         unlink(victim);
         bytes_ -= rows_[victim]->bytes();
         rows_[victim].reset();
@@ -430,6 +568,11 @@ bool ExactNeighborhoodCache::check(VertexId right, std::uint64_t required) {
             ++stats_.witness_bound_rejects;
             return false;
         }
+    }
+    if (resumable_ && (!rows_[right_vertex] || is_partial(right_vertex))) {
+        const auto result=resume(right_vertex,required,false);
+        remember(result.lower,result.upper);
+        return result.similar;
     }
     // Once repeated evictions show that the working set does not fit, don't
     // fully construct every missing right row merely to evict it immediately.

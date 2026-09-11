@@ -32,16 +32,22 @@ struct ExactNeighborhoodCacheStats {
     std::uint64_t activation_calls = 0, activation_full_words_written = 0;
     std::uint64_t activation_sparse_words_cleared = 0;
     std::uint64_t streaming_bound_evaluations = 0, streaming_duplicate_visits = 0;
+    std::uint64_t resume_checks=0, resume_hits=0, resume_new_rows=0;
+    std::uint64_t resume_replay_units=0, resume_new_entries=0, resume_skipped_prefix_entries=0;
+    std::uint64_t resume_partial_saves=0, resume_partial_drops=0, resume_partial_evictions=0;
+    std::uint64_t resume_promotions=0, resume_left_completions=0;
+    double resume_replay_ms=0, resume_save_ms=0;
 };
 
-// Query-local exact neighborhoods. No pair similarities or query parameters
-// are stored. Both endpoints are admitted on first access, under an LRU budget.
+// Query-local exact neighborhoods and pair bounds; nothing is persisted in
+// the offline index. Optional partial rows share the SAME LRU byte budget.
 class ExactNeighborhoodCache {
 public:
     ExactNeighborhoodCache(const FactorIndex& index, std::uint64_t byte_budget,
                            bool witness_bounds = false, bool pressure_only = false,
                            bool witness_bitmaps = false, bool witness_exclusion = false,
-                           bool single_pass = false, bool lean_workspaces = false);
+                           bool single_pass = false, bool lean_workspaces = false,
+                           bool resumable = false);
     void activate(VertexId vertex);
     bool check(VertexId right, std::uint64_t required);
     const ExactNeighborhoodCacheStats& stats() const { return stats_; }
@@ -53,6 +59,9 @@ private:
         Kind kind = Kind::List;
         std::vector<VertexId> ids;
         std::vector<std::uint64_t> words;
+        // Known distinct count. A value below index.degree(v) marks a partial
+        // row, whose words end with {witness, offset, raw-prefix-count}.
+        // Complete rows have no cursor suffix; get() completes partials first.
         std::uint64_t degree = 0;
         std::uint64_t bytes() const {
             return sizeof(Row) + ids.capacity() * sizeof(VertexId) +
@@ -60,11 +69,17 @@ private:
         }
     };
     static constexpr VertexId missing = ~VertexId{0};
+    // Position of the next UNREAD raw posting entry, not a distinct-neighbor offset.
+    struct ResumeCursor { std::uint64_t witness=0, offset=0, scanned=0; };
+    struct ResumeResult { bool similar=false; std::uint64_t lower=0, upper=0; };
+    ResumeResult resume(VertexId vertex,std::uint64_t required,bool complete_required);
+    bool is_partial(VertexId v) const { return rows_[v] && rows_[v]->degree<index_.degree(v); }
     const Row& get(VertexId vertex);
     void unlink(VertexId vertex);
     void touch(VertexId vertex);
     std::unique_ptr<Row> generate(VertexId vertex);
-    std::unique_ptr<Row> encode_scratch(VertexId vertex);
+    std::unique_ptr<Row> encode_scratch(VertexId vertex,
+        std::uint64_t known=~std::uint64_t{0},const ResumeCursor* cursor=nullptr);
     const Row& admit(VertexId vertex, std::unique_ptr<Row> row);
     struct PairBound {
         std::uint64_t key = ~std::uint64_t{0};
@@ -75,6 +90,7 @@ private:
     bool pressure_only_ = false;
     bool witness_exclusion_ = false;
     bool single_pass_ = false;
+    bool resumable_ = false;
     bool lean_workspaces_ = false, active_dense_ = false;
     std::vector<std::uint64_t> witness_counts_;
     std::vector<std::uint32_t> witness_epochs_;

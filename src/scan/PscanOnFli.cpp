@@ -504,6 +504,7 @@ public:
         if (adaptive_neighborhoods)
             adaptive_cache_ = std::make_unique<ExactNeighborhoodCache>(index, neighborhood_cache_bytes,
                 block_mode >= BlockExecutionMode::WitnessBounds &&
+                    block_mode != BlockExecutionMode::CoreResumable &&
                     block_mode != BlockExecutionMode::CoreAnchor &&
                     block_mode != BlockExecutionMode::CoreSinglePassLean &&
                     block_mode != BlockExecutionMode::CoreSinglePass &&
@@ -514,8 +515,9 @@ public:
                 block_mode == BlockExecutionMode::WitnessExclusion ||
                     block_mode == BlockExecutionMode::LazyAlwaysExclusion ||
                     block_mode == BlockExecutionMode::CoreConnectivity,
-                block_mode == BlockExecutionMode::CoreSinglePass || block_mode == BlockExecutionMode::CoreSinglePassLean || block_mode == BlockExecutionMode::CoreAnchor,
-                block_mode == BlockExecutionMode::CoreSinglePassLean || block_mode == BlockExecutionMode::CoreAnchor);
+                block_mode == BlockExecutionMode::CoreSinglePass || block_mode == BlockExecutionMode::CoreSinglePassLean || block_mode == BlockExecutionMode::CoreAnchor || block_mode == BlockExecutionMode::CoreResumable,
+                block_mode == BlockExecutionMode::CoreSinglePassLean || block_mode == BlockExecutionMode::CoreAnchor || block_mode == BlockExecutionMode::CoreResumable,
+                block_mode == BlockExecutionMode::CoreResumable);
         if (block_mode == BlockExecutionMode::CoreAnchor)
             anchor_filter_=std::make_unique<AnchorFilter>(index,neighborhood_cache_bytes/8);
         stats_.timestamp_workspace_bytes = similarity_workspace_.bytes();
@@ -636,7 +638,8 @@ private:
             const bool connectivity = block_mode_ == BlockExecutionMode::CoreConnectivity ||
                                       block_mode_ == BlockExecutionMode::CoreSinglePass ||
                                       block_mode_ == BlockExecutionMode::CoreSinglePassLean ||
-                                      block_mode_ == BlockExecutionMode::CoreAnchor;
+                                      block_mode_ == BlockExecutionMode::CoreAnchor ||
+                                      block_mode_ == BlockExecutionMode::CoreResumable;
             if (connectivity && posting.size() <= mu_) continue;
             std::uint64_t partner=0;
             if (connectivity) {
