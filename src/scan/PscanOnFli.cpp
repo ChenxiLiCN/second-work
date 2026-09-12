@@ -1029,7 +1029,9 @@ private:
             }
         }
 
+        const auto role_begin = std::chrono::steady_clock::now();
         result.roles.resize(vertex_count, PscanVertexRole::Outlier);
+        bool has_unassigned = false;
         for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
             if (result.is_core[vertex]) {
                 result.roles[vertex] = PscanVertexRole::Core;
@@ -1040,16 +1042,68 @@ private:
             memberships.erase(std::unique(memberships.begin(), memberships.end()),
                               memberships.end());
             if (memberships.empty()) {
-                result.roles[vertex] = PscanVertexRole::Outlier;
-                ++stats_.outlier_vertices;
-            } else if (memberships.size() == 1) {
+                has_unassigned = true;
+            } else {
                 result.roles[vertex] = PscanVertexRole::Border;
                 ++stats_.border_vertices;
-            } else {
-                result.roles[vertex] = PscanVertexRole::Hub;
-                ++stats_.hub_vertices;
             }
         }
+        if (has_unassigned) {
+            // A hub has NO cluster membership, but its meta-path neighbors
+            // belong to at least two clusters. Include clustered noncore
+            // neighbors too. Two distinct IDs suffice for this exact predicate;
+            // this is not an approximation, cache budget, or user parameter.
+            struct ClusterSummary {
+                VertexId first = std::numeric_limits<VertexId>::max();
+                VertexId second = std::numeric_limits<VertexId>::max();
+                bool ready = false;
+                void add(VertexId id) {
+                    if (id == std::numeric_limits<VertexId>::max()) return;
+                    if (first == std::numeric_limits<VertexId>::max()) first = id;
+                    else if (id != first) second = id;
+                }
+                bool multiple() const {
+                    return second != std::numeric_limits<VertexId>::max();
+                }
+            };
+            std::vector<ClusterSummary> summaries(index_.center_count());
+            stats_.role_workspace_bytes = summaries.capacity() * sizeof(ClusterSummary);
+            for (VertexId vertex = 0; vertex < vertex_count; ++vertex) {
+                if (result.is_core[vertex] || !result.noncore_clusters[vertex].empty()) continue;
+                ClusterSummary neighbors;
+                for (auto witness : index_.witnesses(vertex)) {
+                    ++stats_.role_witness_entries;
+                    auto& summary = summaries[witness];
+                    if (!summary.ready) {
+                        summary.ready = true;
+                        ++stats_.role_postings_built;
+                        for (auto adjacent : index_.posting(witness)) {
+                            ++stats_.role_posting_entries;
+                            if (result.is_core[adjacent]) {
+                                summary.add(result.core_cluster[adjacent]);
+                            } else {
+                                for (auto id : result.noncore_clusters[adjacent]) {
+                                    summary.add(id);
+                                    if (summary.multiple()) break;
+                                }
+                            }
+                            if (summary.multiple()) break;
+                        }
+                    }
+                    neighbors.add(summary.first);
+                    neighbors.add(summary.second);
+                    if (neighbors.multiple()) break;
+                }
+                if (neighbors.multiple()) {
+                    result.roles[vertex] = PscanVertexRole::Hub;
+                    ++stats_.hub_vertices;
+                } else {
+                    ++stats_.outlier_vertices;
+                }
+            }
+        }
+        stats_.role_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - role_begin).count();
         return result;
     }
 
@@ -1094,6 +1148,11 @@ const char* pscan_role_name(PscanVertexRole role) noexcept {
     return "unknown";
 }
 
+std::uint64_t pscan_mu_from_hinscan(std::uint64_t paper_mu) {
+    if (paper_mu < 2) throw std::invalid_argument("HINSCAN mu must be at least 2 (counts self)");
+    return paper_mu - 1;
+}
+
 PscanOnFliResult run_pscan_on_fli(const FactorIndex& index,
                                   const SimilarityThreshold& threshold,
                                   std::uint64_t mu,
@@ -1107,7 +1166,9 @@ PscanOnFliResult run_pscan_on_fli(const FactorIndex& index,
     if (mu == 0) {
         throw std::invalid_argument("mu must be positive");
     }
-    return PscanExecution(index, threshold, mu, neighborhood_cache_bytes,
+    // Larger thresholds all mean no core; cap before signed internal counters.
+    const auto effective_mu = std::min(mu, index.vertex_count() + 1);
+    return PscanExecution(index, threshold, effective_mu, neighborhood_cache_bytes,
                           fingerprint_index, budgeted_index, adaptive_neighborhoods, block_mode)
         .run();
 }

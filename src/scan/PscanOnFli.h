@@ -71,6 +71,10 @@ struct PscanOnFliStats {
     std::uint64_t sparse_certificate_table_bytes = 0;
     std::uint64_t query_milliseconds = 0;
     double prune_ms = 0, core_ms = 0, noncore_ms = 0;
+    // Included in noncore_ms and the total query time, not additional time.
+    double role_ms = 0;
+    std::uint64_t role_postings_built = 0, role_posting_entries = 0;
+    std::uint64_t role_witness_entries = 0, role_workspace_bytes = 0;
     ExactNeighborhoodCacheStats adaptive_cache;
     AnchorFilterStats anchor;
     std::uint64_t adaptive_workspace_bytes = 0;
@@ -89,6 +93,11 @@ struct PscanOnFliResult {
     PscanOnFliStats stats;
 };
 
+// Public HINSCAN mu counts self (mu >= 2); the low-level pSCAN engine below
+// deliberately retains the upstream OTHER-neighbor convention.
+std::uint64_t pscan_mu_from_hinscan(std::uint64_t paper_mu);
+
+// mu counts OTHER similar neighbors. Roles follow HINSCAN Definitions 3.10-3.11.
 PscanOnFliResult run_pscan_on_fli(const FactorIndex& index,
                                   const SimilarityThreshold& threshold,
                                   std::uint64_t mu,

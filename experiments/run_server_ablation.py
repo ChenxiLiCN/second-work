@@ -42,6 +42,16 @@ def fields(path):
     return result
 
 
+def reject_unmigrated_semantics(metrics):
+    # These historical runners compare against raw pSCAN mu / old role hashes.
+    # Fail closed rather than emit a plausible but semantically mixed speedup.
+    if metrics.get("semantics_version") or metrics.get("mu_counts_self") == "1":
+        raise RuntimeError(
+            "Historical experiment runner is not migrated to closed-mu/full-role semantics. "
+            "No speedup may be reported. Use verify_hinscan_semantics.py for correctness; "
+            "migrate the full-flow baseline and historical-result checks before benchmarking.")
+
+
 def measured(prefix, command, limit):
     start = time.perf_counter()
     with prefix.with_suffix(".log").open("w") as log:
@@ -52,6 +62,7 @@ def measured(prefix, command, limit):
             stderr=subprocess.STDOUT)
     elapsed = time.perf_counter() - start
     metrics = fields(prefix.with_suffix(".log"))
+    reject_unmigrated_semantics(metrics)
     metrics.update(fields(prefix.with_suffix(".time")))
     metrics.update(status=p.returncode, elapsed_s=elapsed)
     return metrics

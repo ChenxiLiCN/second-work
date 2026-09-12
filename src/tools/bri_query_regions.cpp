@@ -17,19 +17,25 @@ int main(int argc, char** argv) {
         const auto mu=std::stoull(argv[4],&consumed);
         if(mu==0 || argv[4][0]=='-' || consumed!=std::string(argv[4]).size())
             throw std::invalid_argument("mu must be positive");
+        const auto pscan_mu=hinscan::pscan_mu_from_hinscan(mu);
         const auto start=Clock::now();
         const auto graph=hinscan::HinGraph::load_binary(argv[1]);
         const auto loaded=Clock::now();
         const auto path=hinscan::parse_meta_path(graph,argv[2]);
         auto factor=hinscan::FactorIndex::build(graph,path,false);
         const auto built=Clock::now();
-        const auto result=hinscan::run_region_completion(std::move(factor),eps,mu);
+        const auto result=hinscan::run_region_completion(std::move(factor),eps,pscan_mu);
         const auto done=Clock::now();
         hinscan::write_pscan_on_fli_results(argv[5],argv[3],mu,result.clustering);
         const auto saved=Clock::now();
         const auto& r=result.regions;
         const auto& q=result.clustering.stats;
         std::cout << "algorithm=region_completion_v1\n"
+            << "semantics_version=hinscan_nonindependent_v1\n"
+            << "mu_counts_self=1\nmu=" << mu << '\n'
+            << "pscan_other_mu=" << pscan_mu << '\n'
+            << "role_ms=" << q.role_ms << '\n'
+            << "role_workspace_bytes=" << q.role_workspace_bytes << '\n'
             << "fallback_block_mode=9\ncache_budget_mib=32\n"
             << "used_roundtrip_metadata=0\n"
             << "index_load_ms=" << ms(loaded-start) << '\n'

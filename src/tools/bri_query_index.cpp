@@ -31,12 +31,13 @@ int main(int argc, char** argv) {
         const auto mu = std::stoull(argv[4], &consumed);
         if (consumed != std::string(argv[4]).size() || mu == 0 || argv[4][0] == '-')
             throw std::invalid_argument("mu must be positive");
+        const auto pscan_mu = hinscan::pscan_mu_from_hinscan(mu);
         const auto graph = hinscan::HinGraph::load_binary(argv[1]);
         const auto path = hinscan::parse_meta_path(graph, argv[2]);
         const auto loaded = Clock::now();
         const auto factor = hinscan::FactorIndex::build(graph, path);
         const auto built = Clock::now();
-        const auto result = hinscan::run_pscan_on_fli(factor, threshold, mu,
+        const auto result = hinscan::run_pscan_on_fli(factor, threshold, pscan_mu,
             HINSCAN_CACHE_MIB * 1024ULL * 1024, nullptr, nullptr, true,
             static_cast<hinscan::BlockExecutionMode>(HINSCAN_BLOCK_MODE));
         const auto queried = Clock::now();
@@ -56,6 +57,15 @@ int main(int argc, char** argv) {
         std::cout<<"hotspot_diagnostic=1\nhotspot_report_ms="<<ms(Clock::now()-report_start)<<'\n';
 #endif
         std::cout << "index_mode=base_relation_on_demand_fli\n"
+                  << "semantics_version=hinscan_nonindependent_v1\n"
+                  << "mu_counts_self=1\nmu=" << mu << '\n'
+                  << "pscan_other_mu=" << pscan_mu << '\n'
+                  << "role_ms=" << q.role_ms << '\n'
+                  << "role_postings_built=" << q.role_postings_built << '\n'
+                  << "role_posting_entries=" << q.role_posting_entries << '\n'
+                  << "role_witness_entries=" << q.role_witness_entries << '\n'
+                  << "role_workspace_bytes=" << q.role_workspace_bytes << '\n'
+                  << "online_compute_ms=" << ms(queried-loaded) << '\n'
                   << "block_mode=" << HINSCAN_BLOCK_MODE << '\n'
                   << "single_pass=" << (HINSCAN_BLOCK_MODE >= 10 && HINSCAN_BLOCK_MODE <= 13) << '\n'
                   << "lean_workspaces=" << (HINSCAN_BLOCK_MODE >= 11 && HINSCAN_BLOCK_MODE <= 13) << '\n'

@@ -46,7 +46,7 @@ PscanOnFliResult oracle(const std::vector<std::vector<VertexId>>& rows,
     const auto missing=~VertexId{0};
     r.is_core.resize(n); r.core_cluster.assign(n,missing);
     r.noncore_clusters.resize(n); r.roles.assign(n,PscanVertexRole::Outlier);
-    for (VertexId u=0;u<n;++u) r.is_core[u]=similar[u].size()>=mu;
+    for (VertexId u=0;u<n;++u) r.is_core[u]=similar[u].size()+1>=mu;
     for (VertexId u=0;u<n;++u) {
         if (!r.is_core[u] || r.core_cluster[u]!=missing) continue;
         std::vector<VertexId> queue{u}; r.core_cluster[u]=u;
@@ -58,8 +58,16 @@ PscanOnFliResult oracle(const std::vector<std::vector<VertexId>>& rows,
         std::set<VertexId> ids;
         for (auto v:similar[u]) if (r.is_core[v]) ids.insert(r.core_cluster[v]);
         r.noncore_clusters[u].assign(ids.begin(),ids.end());
-        if (ids.size()==1) r.roles[u]=PscanVertexRole::Border;
-        if (ids.size()>1) r.roles[u]=PscanVertexRole::Hub;
+        if (!ids.empty()) r.roles[u]=PscanVertexRole::Border;
+    }
+    // Memberships must be complete before examining ANY neighbor's clusters.
+    for (VertexId u=0;u<n;++u) if (!r.is_core[u] && r.noncore_clusters[u].empty()) {
+        std::set<VertexId> ids;
+        for (auto v:rows[u]) {
+            if (r.is_core[v]) ids.insert(r.core_cluster[v]);
+            else ids.insert(r.noncore_clusters[v].begin(),r.noncore_clusters[v].end());
+        }
+        if (ids.size()>=2) r.roles[u]=PscanVertexRole::Hub;
     }
     return r;
 }
@@ -233,7 +241,7 @@ int main(int argc,char** argv) {
 #endif
                 for (const auto* eps:{"0.1","0.5","0.6","0.9","1"}) for (auto mu:{1ULL,2ULL,5ULL,40ULL}) {
                     const auto threshold=SimilarityThreshold::parse(eps);
-                    const auto truth=oracle(rows,threshold,mu);
+                    const auto truth=oracle(rows,threshold,mu+1); // Engine mu excludes self.
                     for (auto bytes:{0ULL,4096ULL}) {
                         const auto control=run_pscan_on_fli(f,threshold,mu,bytes,nullptr,nullptr,true,BlockExecutionMode::CoreSinglePassLean);
 #ifdef HINSCAN_VERIFY_RESUMABLE

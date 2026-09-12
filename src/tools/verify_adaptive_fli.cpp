@@ -58,7 +58,7 @@ PscanOnFliResult oracle_clustering(const std::vector<std::vector<VertexId>>& clo
     r.core_cluster.assign(n, std::numeric_limits<VertexId>::max());
     r.noncore_clusters.resize(n);
     r.roles.assign(n, PscanVertexRole::Outlier);
-    for (VertexId v=0; v<n; ++v) r.is_core[v] = similar[v].size() >= mu;
+    for (VertexId v=0; v<n; ++v) r.is_core[v] = similar[v].size() + 1 >= mu;
     for (VertexId root=0; root<n; ++root) {
         if (!r.is_core[root] || r.core_cluster[root] != std::numeric_limits<VertexId>::max()) continue;
         std::vector<VertexId> queue{root};
@@ -75,8 +75,15 @@ PscanOnFliResult oracle_clustering(const std::vector<std::vector<VertexId>>& clo
         std::set<VertexId> memberships;
         for (const auto u : similar[v]) if (r.is_core[u]) memberships.insert(r.core_cluster[u]);
         r.noncore_clusters[v].assign(memberships.begin(), memberships.end());
-        if (memberships.size()==1) r.roles[v] = PscanVertexRole::Border;
-        if (memberships.size()>1) r.roles[v] = PscanVertexRole::Hub;
+        if (!memberships.empty()) r.roles[v] = PscanVertexRole::Border;
+    }
+    for (VertexId v=0; v<n; ++v) if (!r.is_core[v] && r.noncore_clusters[v].empty()) {
+        std::set<VertexId> memberships;
+        for (auto u:closed[v]) {
+            if (r.is_core[u]) memberships.insert(r.core_cluster[u]);
+            else memberships.insert(r.noncore_clusters[u].begin(),r.noncore_clusters[u].end());
+        }
+        if (memberships.size()>=2) r.roles[v] = PscanVertexRole::Hub;
     }
     return r;
 }
@@ -227,7 +234,7 @@ int main(int argc, char** argv) {
                     }
                     for (const auto* text : {"0.2","0.5","0.7","0.9","1.0"}) for (const std::uint64_t mu : {1ULL,2ULL,5ULL,300ULL}) {
                         const auto eps = SimilarityThreshold::parse(text);
-                        const auto reference = oracle_clustering(expected,eps,mu);
+                        const auto reference = oracle_clustering(expected,eps,mu+1); // Engine mu excludes self.
                         compare(run_pscan_on_fli(factor,eps,mu,budget),reference);
                         // Unchanged pSCAN processing with old neighborhood engine.
                         compare(run_pscan_on_fli(factor,eps,mu,budget,nullptr,nullptr,false),reference);

@@ -13,6 +13,18 @@ add_library(hin_io
 )
 target_include_directories(hin_io PUBLIC src)
 
+# Isolated relation-only diagnostic, not linked into production queries.
+add_executable(diagnose_containment src/tools/diagnose_containment.cpp
+    src/index/RelationContainmentForest.cpp)
+target_link_libraries(diagnose_containment PRIVATE hin_io)
+set_target_properties(diagnose_containment PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+if(MSVC)
+    target_compile_options(diagnose_containment PRIVATE /O2 /W4)
+else()
+    target_compile_options(diagnose_containment PRIVATE -O3 -Wall -Wextra -Wpedantic)
+endif()
+
 if(MSVC)
     target_compile_options(hin_io PRIVATE /O2 /W4)
 else()

@@ -16,6 +16,8 @@ struct RegionCompletionResult {
     PscanOnFliResult clustering;
     RegionCompletionStats regions;
 };
+// Low-level mu counts OTHER neighbors, as in run_pscan_on_fli.
+// CLI callers map the paper's closed-neighborhood mu exactly once.
 RegionCompletionResult run_region_completion(FactorIndex index,
     const SimilarityThreshold& threshold, std::uint64_t mu,
     std::uint64_t cache_bytes=32ULL*1024*1024);
