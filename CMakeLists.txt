@@ -8,6 +8,31 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(BUILD_PSCAN_BASELINE "Build the unmodified upstream pSCAN baseline" ON)
 
+# Independent majority-group path: old query targets and PSCAN stay unchanged.
+add_library(majority_index src/index/MajorityIndex.cpp)
+target_include_directories(majority_index PUBLIC src)
+target_link_libraries(majority_index PUBLIC hin_io)
+add_library(layered_completion src/scan/LayeredCompletion.cpp)
+target_include_directories(layered_completion PUBLIC src)
+target_link_libraries(layered_completion PUBLIC majority_index pscan_on_fli_core)
+add_executable(mgi_build_index src/tools/mgi_build_index.cpp)
+target_link_libraries(mgi_build_index PRIVATE majority_index)
+add_executable(mgi_query_index src/tools/mgi_query_index.cpp)
+target_link_libraries(mgi_query_index PRIVATE layered_completion)
+add_executable(verify_majority_index src/tools/verify_majority_index.cpp)
+target_link_libraries(verify_majority_index PRIVATE majority_index)
+add_executable(verify_selected_factor src/tools/verify_selected_factor.cpp)
+target_link_libraries(verify_selected_factor PRIVATE fli_index)
+set_target_properties(mgi_build_index mgi_query_index verify_majority_index verify_selected_factor
+    PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+foreach(target majority_index layered_completion)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /O2 /W4)
+    else()
+        target_compile_options(${target} PRIVATE -O3 -Wall -Wextra -Wpedantic)
+    endif()
+endforeach()
+
 add_library(hin_io
     src/hin/HinGraph.cpp
 )

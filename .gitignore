@@ -45,6 +45,7 @@ compile_commands.json
 # Generated graph/index artifacts, including those placed outside data/.
 *.bin
 *.bri
+*.mgi
 *.fli
 *.fni
 *.bsi

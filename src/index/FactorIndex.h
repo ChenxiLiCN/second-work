@@ -78,6 +78,11 @@ public:
     static FactorIndex build(const HinGraph& graph,
                              const std::vector<std::uint32_t>& meta_path,
                              bool prepare_exact_rows = true);
+    // Expand only these original source IDs; intermediate domains stay intact.
+    // Returned vertex IDs are positions in the strictly increasing selection.
+    static FactorIndex build_selected(const HinGraph& graph,
+        const std::vector<std::uint32_t>& meta_path,
+        const std::vector<VertexId>& sources, bool prepare_exact_rows = true);
     // Query-only relation view: no projected degrees or graph are materialized.
     void prepare_exact();
     FactorIndex restrict_to_components(const std::vector<bool>& keep) const;
@@ -106,6 +111,9 @@ public:
     const FactorIndexStats& stats() const noexcept;
 
 private:
+    static FactorIndex build_impl(const HinGraph& graph,
+        const std::vector<std::uint32_t>& meta_path, bool prepare_exact_rows,
+        const std::vector<VertexId>* sources);
     std::vector<std::vector<VertexId>> witnesses_;
     std::vector<std::vector<VertexId>> postings_;
     std::vector<std::vector<VertexId>> degree_ordered_postings_;

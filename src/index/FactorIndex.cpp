@@ -235,10 +235,32 @@ bool SimilarityThreshold::fails_degree_ratio(std::uint64_t left_degree,
 FactorIndex FactorIndex::build(const HinGraph& graph,
                                const std::vector<std::uint32_t>& meta_path,
                                bool prepare_exact_rows) {
+    return build_impl(graph,meta_path,prepare_exact_rows,nullptr);
+}
+
+FactorIndex FactorIndex::build_selected(const HinGraph& graph,
+    const std::vector<std::uint32_t>& meta_path,
+    const std::vector<VertexId>& sources, bool prepare_exact_rows) {
+    if(meta_path.empty() || meta_path.front()>=graph.vertex_types().size())
+        throw std::invalid_argument("invalid selected-source meta-path");
+    const auto count=graph.vertex_types()[meta_path.front()].count;
+    if(!std::is_sorted(sources.begin(),sources.end()) ||
+       std::adjacent_find(sources.begin(),sources.end())!=sources.end() ||
+       (!sources.empty() && sources.back()>=count))
+        throw std::invalid_argument("selected sources must be strictly increasing and in range");
+    if(sources.size()==count) return build(graph,meta_path,prepare_exact_rows);
+    return build_impl(graph,meta_path,prepare_exact_rows,&sources);
+}
+
+FactorIndex FactorIndex::build_impl(const HinGraph& graph,
+    const std::vector<std::uint32_t>& meta_path, bool prepare_exact_rows,
+    const std::vector<VertexId>* sources) {
     if (meta_path.size() < 3 || meta_path.size() % 2 == 0) {
         throw std::invalid_argument(
             "factor index requires an odd-length symmetric type sequence");
     }
+    for(auto type:meta_path) if(type>=graph.vertex_types().size())
+        throw std::invalid_argument("factor index meta-path type is out of range");
     for (std::size_t i = 0, j = meta_path.size() - 1; i < j; ++i, --j) {
         if (meta_path[i] != meta_path[j]) {
             throw std::invalid_argument("factor index requires a symmetric meta-path");
@@ -247,7 +269,7 @@ FactorIndex FactorIndex::build(const HinGraph& graph,
 
     const auto begin = std::chrono::steady_clock::now();
     FactorIndex index;
-    if (meta_path.size() == 3) {
+    if (meta_path.size() == 3 && sources == nullptr) {
         const auto t = graph.transition(meta_path[0], meta_path[1]);
         const auto& r = *t.relation;
         if (!prepare_exact_rows && r.source_type != r.target_type) {
@@ -287,7 +309,7 @@ FactorIndex FactorIndex::build(const HinGraph& graph,
             return index;
         }
     }
-    const auto target_count64 = graph.vertex_types()[meta_path.front()].count;
+    const auto target_count64 = sources ? sources->size() : graph.vertex_types()[meta_path.front()].count;
     const auto center_position = meta_path.size() / 2;
     const auto center_count64 = graph.vertex_types()[meta_path[center_position]].count;
     if (target_count64 > std::numeric_limits<VertexId>::max() ||
@@ -315,7 +337,7 @@ FactorIndex FactorIndex::build(const HinGraph& graph,
     std::vector<std::uint32_t> expansion_seen(static_cast<std::size_t>(maximum_type_count), 0);
     std::uint32_t expansion_epoch = 0;
     for (std::size_t source = 0; source < target_count; ++source) {
-        frontier.assign(1, static_cast<VertexId>(source));
+        frontier.assign(1, sources ? (*sources)[source] : static_cast<VertexId>(source));
         for (const auto& transition : half_transitions) {
             next.clear();
             if (++expansion_epoch == 0) {
