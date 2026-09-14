@@ -14,6 +14,7 @@ import tempfile
 from audit_semantics import (fixtures, full_path_rows, incidence, reference,
                              write_hin, read_result, read_roles, cluster_part)
 from majority_group_index import MajorityIndex
+from run_server_majority_diagnosis import compare
 
 
 def check_stored_groups(file, counts, relations):
@@ -110,6 +111,17 @@ def audit(bin_dir):
                 phases = sum(float(metric[k]) for k in ['layer_proof_ms','residual_prepare_ms','residual_scan_ms','result_merge_ms'])
                 assert phases <= float(metric['online_compute_ms'])+0.1
                 residual = int(metric['residual_vertices'])
+                assert metric['residual_diagnostics_version'] == '1'
+                for key in ('residual_prune_ms', 'residual_core_ms', 'residual_noncore_ms',
+                            'residual_degree_compute_ms', 'residual_posting_order_ms',
+                            'residual_exact_similarity_checks', 'residual_candidate_vertices_emitted',
+                            'residual_candidate_posting_entries_read', 'residual_witness_entries_read',
+                            'residual_adaptive_streaming_entries', 'residual_adaptive_posting_entries'):
+                    assert float(metric[key]) >= 0, key
+                    if residual == 0:
+                        assert float(metric[key]) == 0, key
+                scan_phases = sum(float(metric['residual_'+k]) for k in ('prune_ms','core_ms','noncore_ms'))
+                assert scan_phases <= float(metric['residual_scan_ms']) + 0.1
                 assert residual+int(metric['completed_core_vertices'])+int(metric['completed_noncore_vertices']) == len(rows)
                 if kind=='early' or (kind=='scalar' and eps=='0.5'):
                     assert residual == 0 and int(metric['residual_half_expansion_entries']) == 0
@@ -117,7 +129,9 @@ def audit(bin_dir):
                 if kind=='mixed': assert residual==13 and int(metric['completed_core_vertices'])==6
                 # Existing production PSCAN path, same external mu and graph.
                 control = base/f'control{qi}'
-                execute([tools['bri_query_core_connectivity'],index/'base.bri',path,eps,mu,control])
+                control_metric = execute([tools['bri_query_core_connectivity'],index/'base.bri',path,eps,mu,control])
+                if mu == 5:
+                    compare(dict(control_metric,status=0),dict(metric,status=0))
                 assert read_result(control/f'result-{eps}-{mu}.txt',len(rows)) == got
                 assert read_roles(control/f'roles-{eps}-{mu}.txt',len(rows)) == roles
                 # Upstream supplies clusters, not the paper's complete role definition.

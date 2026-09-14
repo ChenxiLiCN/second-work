@@ -319,6 +319,7 @@ LayeredCompletionResult run_layered_completion(const HinGraph& graph,
             : FactorIndex::build(graph, path);
         st.residual_incidences = factor.stats().half_path_incidences;
         st.residual_half_expansion_entries = factor.stats().half_expansion_entries;
+        output.residual_factor = factor.stats();
         const auto prepared = Clock::now(); st.residual_prepare_ms = ms(prepared - proof_end);
         residual = run_pscan_on_fli(factor, threshold, pscan_other_mu,
             32ULL * 1024 * 1024, nullptr, nullptr, true, BlockExecutionMode::CoreConnectivity);

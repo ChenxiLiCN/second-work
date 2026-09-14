@@ -22,6 +22,7 @@ struct LayeredCompletionStats {
 struct LayeredCompletionResult {
     PscanOnFliResult clustering;
     LayeredCompletionStats layers;
+    FactorIndexStats residual_factor;
 };
 
 // Low-level mu counts OTHER neighbors. The CLI maps self-inclusive mu once.
